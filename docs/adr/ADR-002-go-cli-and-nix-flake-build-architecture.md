@@ -21,6 +21,12 @@ A Nix-built image does not require the complete host Nix store. It can contain
 only the runtime closure of the selected packages, and it does not need the Nix
 daemon or CLI at runtime.
 
+The existing desktop-oriented T3 package is not an acceptable container input.
+On 2026-08-21 its runtime closure measured approximately 4.1 GiB and directly
+referenced Electron, Codex, and Claude Code. This demonstrates that closure-based
+images are only as focused as their package outputs; blindly copying the current
+package would produce an unnecessarily large workspace image.
+
 ## Decision
 
 ### 1. Implement the PAW CLI in Go
@@ -94,6 +100,25 @@ Build workspace images from selected runtime closures. Do not include the Nix
 daemon, Nix CLI, compilers, build caches, or general contributor toolchain unless
 a future capability explicitly requires them.
 
+Package a dedicated `t3code-headless` output containing the server, web assets,
+resource monitor, and runtime dependencies needed by `t3 serve`. It must not
+reference Electron, desktop resources, provider binaries, or build-time
+dependencies.
+
+Build image variants from composable layers rather than publishing one mandatory
+all-tools image:
+
+- `paw-core` contains the headless T3 runtime and essential workspace tools;
+- provider layers add Codex, Claude Code, or OpenCode;
+- capability layers add platform tools such as Kubernetes, Terraform/OpenTofu,
+  or cloud CLIs; and
+- released profiles select the required provider and capability layers.
+
+Shared closures and OCI layers should be reused by registries and nodes, but
+layer reuse is not accepted as a substitute for controlling total unpacked size.
+Large tools must remain outside `paw-core` and be included only by profiles that
+require them.
+
 Publish multi-architecture images and refer to released images by immutable
 digest. Build architectures natively in CI where practical and publish a common
 image index.
@@ -102,12 +127,27 @@ Normal PAW users install the released Go binary and pull released images. Nix is
 required for contributors building PAW or authoring custom profiles, not for
 ordinary workspace operation.
 
-### 5. Package providers without packaging credentials
+### 5. Measure and enforce image budgets
 
-The initial image supports the native T3 adapters for Codex and Claude Code and
-the OpenCode adapter for GitHub Copilot. Provider binaries may share an image;
-their authentication and state are separate workspace attachments governed by
-the selected persistence and identity policy.
+CI records, for every released image:
+
+- the unique Nix runtime-closure size;
+- the uncompressed OCI image size;
+- the compressed registry-transfer size; and
+- the largest closure members and layers.
+
+The first optimized headless and provider images establish reviewed size budgets.
+Subsequent builds fail when they exceed those budgets beyond an explicitly
+documented tolerance. Raising a budget requires an intentional review explaining
+the new runtime dependency or capability.
+
+### 6. Package providers without packaging credentials
+
+The initial provider variants support the native T3 adapters for Codex and
+Claude Code and the OpenCode adapter for GitHub Copilot. A released profile may
+combine providers when collaboration requires it, but provider binaries are not
+part of the minimal core by default. Authentication and state are separate
+workspace attachments governed by the selected persistence and identity policy.
 
 No personal or organizational provider credential is stored in a Nix derivation,
 OCI layer, release artifact, profile definition, or build log.
@@ -122,6 +162,8 @@ OCI layer, release artifact, profile definition, or build log.
   binary builds, image construction, and checks.
 - Normal users do not need to install or understand Nix.
 - Runtime images contain only selected closures and omit build infrastructure.
+- Headless, provider, and capability boundaries make image cost visible and
+  prevent unrelated tools from accumulating in every workspace.
 - The Go CLI can be released independently and tested against multiple cluster
   adapters.
 
@@ -133,6 +175,8 @@ OCI layer, release artifact, profile definition, or build log.
   tests.
 - Native multi-architecture image production requires suitable CI builders.
 - Contributors defining new profiles need some Nix knowledge.
+- Maintaining focused package outputs and image budgets adds packaging and CI
+  work that a general-purpose desktop package avoids.
 
 ## Alternatives considered
 
@@ -162,10 +206,17 @@ on any supported Kubernetes environment.
 The first implementation must demonstrate:
 
 1. `nix build .#paw` builds the Go CLI;
-2. a flake output builds the `platform-readonly` workspace image;
-3. the image contains required runtime closures but no Nix daemon or decryption
+2. a flake output builds `t3code-headless` without Electron or desktop runtime
+   references;
+3. flake outputs build `paw-core` and provider-specific image variants;
+4. a flake output builds the `platform-readonly` workspace image;
+5. each image reports its closure, uncompressed, compressed, and largest-member
+   sizes;
+6. reviewed budgets are established from the optimized baseline and enforced in
+   CI;
+7. the images contain required runtime closures but no Nix daemon or decryption
    identity;
-4. `nix develop` provides the contributor environment;
-5. `nix flake check` validates Go, modules, profile metadata, and image policy;
-6. Linux amd64 and arm64 release artifacts can be produced; and
-7. a released `paw` binary can deploy a prebuilt image without Nix installed.
+8. `nix develop` provides the contributor environment;
+9. `nix flake check` validates Go, modules, profile metadata, and image policy;
+10. Linux amd64 and arm64 release artifacts can be produced; and
+11. a released `paw` binary can deploy a prebuilt image without Nix installed.

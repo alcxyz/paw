@@ -9,8 +9,9 @@ PAW is intended to run on a local Kubernetes implementation or a remote
 self-managed, on-premises, or managed cluster without maintaining a separate
 deployment model for each environment.
 
-> PAW is currently architecture-first and pre-implementation. It is not ready
-> for operational use. The accepted decisions live in
+> PAW is in early implementation. The CLI and reproducible build foundation
+> exist, but the workspace runtime is not ready for operational use. Accepted
+> decisions live in
 > [docs/adr](docs/adr/README.md).
 
 ## Goals
@@ -57,12 +58,21 @@ state.
 pair with, and delete workspaces while hiding cluster-specific mechanics.
 Ordinary users should be able to run released binaries and images without Nix.
 
+The initial foundation provides:
+
+```text
+paw version
+paw doctor
+paw profile list
+```
+
 ### Nix flake
 
 The flake is the contributor build and composition interface. It will pin and
 produce:
 
 - the `paw` Go CLI;
+- a dedicated headless T3 package without Electron or desktop resources;
 - multi-architecture workspace images;
 - provider CLIs and platform tools;
 - contributor development shells;
@@ -71,6 +81,12 @@ produce:
 
 Workspace images contain only required runtime closures. They do not require a
 Nix daemon or a general-purpose Nix installation at runtime.
+
+Images are composed from a small headless core, provider layers, and
+capability-specific tooling. Codex, Claude Code, OpenCode, Azure tooling, and
+other large dependencies are included only when selected by a released profile.
+CI measures closure and OCI sizes and enforces budgets established from the first
+optimized images.
 
 ### Kubernetes
 
@@ -126,8 +142,9 @@ The baseline design includes:
 
 ## Repository status
 
-The project currently contains its architecture and agent safety rules. Planned
-implementation areas are:
+The project currently contains its architecture, agent safety rules, initial Go
+CLI, and reproducible flake checks. The repository structure and planned areas
+are:
 
 ```text
 cmd/paw/              Go CLI entry point
@@ -143,6 +160,31 @@ Start with:
 
 - [ADR-001: Kubernetes-native collaborative AI workspaces](docs/adr/ADR-001-kubernetes-native-collaborative-ai-workspaces.md)
 - [ADR-002: Go CLI and Nix flake build architecture](docs/adr/ADR-002-go-cli-and-nix-flake-build-architecture.md)
+
+## Development
+
+Enter the pinned contributor environment with direnv or Nix:
+
+```sh
+direnv allow
+# or
+nix develop
+```
+
+Run the local and flake checks:
+
+```sh
+go test ./...
+go vet ./...
+nix flake check
+```
+
+Build or run the CLI:
+
+```sh
+nix build .#paw
+nix run .#paw -- profile list
+```
 
 ## Sensitive material
 
