@@ -56,6 +56,8 @@ execution.
 
 - Minikube is the initial reference implementation for local Kubernetes.
 - Another conforming local Kubernetes implementation may be substituted.
+- Remote execution may use a self-managed, on-premises, or managed Kubernetes
+  distribution.
 - The local container or VM driver is an implementation detail.
 - Docker Compose is not maintained as a parallel deployment path.
 - Kustomize overlays may express bounded local and remote differences while
@@ -63,6 +65,22 @@ execution.
 
 Docker and other OCI tooling remain valid ways to build, transport, and execute
 the image. Avoiding Docker Compose does not mean avoiding OCI containers.
+
+The portable core must use standard Kubernetes APIs and must not depend on a
+specific cluster, developer machine, DNS domain, Git host, container runtime,
+cloud provider, or secret store. Environment-specific integration is supplied
+through explicit adapters for:
+
+- local cluster lifecycle;
+- ingress, authentication, DNS, and TLS;
+- storage classes and workspace retention;
+- image registry and Git hosting;
+- workload identity or credential brokering; and
+- optional policy and observability integrations.
+
+Each adapter must declare and validate its required cluster capabilities. The
+current development environment is a reference implementation and proving
+ground, not an architectural dependency.
 
 ### 3. Tooling and authority are separate layers
 
@@ -128,6 +146,8 @@ More permissive modes require an explicitly stronger isolation profile.
 ### Positive
 
 - Local and remote environments exercise the same image and Kubernetes model.
+- The core can be distributed independently of the original development host,
+  cluster, identity provider, and repository hosting environment.
 - Capabilities become reviewable bundles of tooling and authority.
 - Multiple devices can collaborate without creating competing T3 backends.
 - Workspace deletion provides a clear revocation and cleanup boundary.
@@ -140,6 +160,8 @@ More permissive modes require an explicitly stronger isolation profile.
   development shell.
 - Some local and remote differences remain, especially identity and ingress;
   overlays and contract tests must keep them bounded.
+- Portability requires explicit adapter contracts and conformance tests rather
+  than relying on behavior supplied accidentally by the reference environment.
 - A single T3 backend is not highly available within one workspace.
 - Interactive collaboration within one workspace shares that workspace's
   effective authority unless finer-grained controls are added externally.
@@ -190,6 +212,8 @@ The first proof of concept should demonstrate:
 
 - Which Git host, organization, repository name, and visibility should own the
   implementation?
+- What is the minimum Kubernetes and adapter capability contract supported by
+  the first release?
 - Should Devbox be the canonical tool manifest or a generated developer-facing
   view over Nix modules?
 - What creates and expires workspaces: Helm/Kustomize automation, a small
