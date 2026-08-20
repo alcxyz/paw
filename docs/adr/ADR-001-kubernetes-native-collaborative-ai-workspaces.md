@@ -1,6 +1,6 @@
 # ADR-001: Kubernetes-native collaborative AI workspaces
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-20
 
 ## Context
@@ -14,6 +14,8 @@ unnecessarily large blast radius.
 The desired environment must:
 
 - support multiple browser clients collaborating through one T3 backend;
+- support multiple coding-agent providers without coupling the workspace to one
+  model vendor or subscription;
 - isolate repositories, credentials, processes, network access, and state;
 - compose additional tools and authority as explicit capabilities;
 - run locally and in a shared Kubernetes platform without maintaining two
@@ -38,9 +40,10 @@ depending on the selected profile.
 Each workspace contains:
 
 - exactly one T3 server process;
-- the Codex provider process started by T3;
+- one or more provider CLIs started by T3, initially Codex, Claude Code, and
+  OpenCode for GitHub Copilot;
 - selected repository clones or worktrees;
-- an isolated T3 state directory and Codex home;
+- isolated T3 and provider state directories;
 - a composed development tool environment;
 - capability-specific identity and policy; and
 - optional persistent storage governed by a workspace lifetime policy.
@@ -84,12 +87,12 @@ ground, not an architectural dependency.
 
 ### 3. Tooling and authority are separate layers
 
-Use a Nix-backed environment to pin command-line tools. Evaluate Devbox as the
-developer-facing package, script, plugin, and direnv interface.
+Use the Nix flake and module architecture defined by ADR-002 to pin and compose
+command-line tools. Use the Go `paw` CLI as the user and operator interface.
 
-Devbox configuration does not define the security boundary. Kubernetes policy
-and workspace capabilities define identity, RBAC, mounts, network access,
-resource limits, and admission requirements.
+Tool configuration does not define the security boundary. Kubernetes policy and
+workspace capabilities define identity, RBAC, mounts, network access, resource
+limits, and admission requirements.
 
 A capability module declares at least:
 
@@ -176,11 +179,13 @@ Rejected as the canonical approach because it duplicates lifecycle, networking,
 storage, and policy configuration and creates predictable drift. An OCI builder
 or runtime may still use Docker without introducing Compose.
 
-### Native Devbox shell locally
+### Devbox as the toolchain and container interface
 
-Retained only as a possible trusted fast path, not as the isolation or parity
-contract. It cannot reproduce Kubernetes identity, RBAC, network, admission, or
-storage controls on its own.
+Rejected for the initial architecture. Devbox provides a useful interface over
+Nix, but PAW already requires its own operator CLI and needs direct control of
+flake outputs, module evaluation, runtime closures, and release artifacts.
+Adding Devbox would introduce a second user-facing abstraction without defining
+Kubernetes identity, RBAC, network, admission, or storage controls.
 
 ### One shared global T3 backend
 
@@ -205,20 +210,21 @@ The first proof of concept should demonstrate:
    logs, workspace state, or build context;
 6. enforced pod, RBAC, resource, and egress restrictions;
 7. Terraform/OpenTofu planning and read-only Kubernetes/cloud inspection;
-8. reliable expiry, revocation, deletion, and audit behavior; and
-9. automated tests for the capability and security contracts.
+8. reliable expiry, revocation, deletion, and audit behavior;
+9. automated tests for the capability and security contracts; and
+10. provider conformance for Codex, Claude Code, and GitHub Copilot through
+    OpenCode, including authentication, thread resume, worktree selection, and
+    supervised permissions.
 
 ## Open questions
 
-- Which Git host, organization, repository name, and visibility should own the
-  implementation?
 - What is the minimum Kubernetes and adapter capability contract supported by
   the first release?
-- Should Devbox be the canonical tool manifest or a generated developer-facing
-  view over Nix modules?
 - What creates and expires workspaces: Helm/Kustomize automation, a small
   controller, or an existing internal platform API?
 - Which identity broker and approval boundary should be used for local
   development?
 - Which state should survive workspace deletion, and for how long?
+- How should each provider's authentication state be attached, persisted, and
+  audited without baking credentials into workspace images?
 - What is the smallest representative repository bundle for the pilot?
