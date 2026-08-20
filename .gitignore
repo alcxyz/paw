@@ -1,0 +1,7 @@
+.direnv/
+.devbox/
+.env
+.env.*
+!.env.example
+result
+result-*
