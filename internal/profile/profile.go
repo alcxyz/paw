@@ -1,5 +1,7 @@
 package profile
 
+import "git.alc.xyz/alcxyz/paw/contract"
+
 // Definition is the user-visible portion of a built-in workspace profile.
 // Runtime enforcement belongs to the emitted Kubernetes and identity contracts.
 type Definition struct {
@@ -8,22 +10,20 @@ type Definition struct {
 	Description string
 }
 
-var builtins = []Definition{
-	{
-		Name:        "core",
-		Authority:   "workspace-only",
-		Description: "Headless T3 runtime and essential workspace tools",
-	},
-	{
-		Name:        "platform-readonly",
-		Authority:   "read-only",
-		Description: "Selected repositories and read-only platform inspection",
-	},
-}
-
-// Builtins returns a copy so callers cannot mutate the profile catalog.
+// Builtins returns definitions derived from the canonical embedded contract.
 func Builtins() []Definition {
-	profiles := make([]Definition, len(builtins))
-	copy(profiles, builtins)
-	return profiles
+	value, err := contract.V0()
+	if err != nil {
+		panic(err)
+	}
+
+	result := make([]Definition, 0, len(value.Profiles))
+	for _, profile := range value.Profiles {
+		result = append(result, Definition{
+			Name:        profile.Name,
+			Authority:   profile.AuthorityCeiling,
+			Description: profile.Description,
+		})
+	}
+	return result
 }

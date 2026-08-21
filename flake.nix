@@ -13,6 +13,24 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
+      contract = builtins.fromJSON (builtins.readFile ./contract/v0.json);
+      profileEvaluations =
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          evalProfile =
+            module:
+            import ./nix/lib/eval-profile.nix {
+              inherit contract module pkgs;
+              inherit (pkgs) lib;
+            };
+        in
+        {
+          core = evalProfile ./nix/profiles/core.nix;
+          platform-readonly = evalProfile ./nix/profiles/platform-readonly.nix;
+        };
+      profileMetadata =
+        system: nixpkgs.lib.mapAttrs (_: value: value.metadata) (profileEvaluations system);
     in
     {
       packages = forAllSystems (
@@ -66,10 +84,15 @@
         default = self.apps.${system}.paw;
       });
 
+      pawProfiles = forAllSystems profileMetadata;
+
       checks = forAllSystems (
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          profilesJSON = pkgs.writeText "paw-profiles-${system}.json" (
+            builtins.toJSON self.pawProfiles.${system}
+          );
           t3code-headless = self.packages.${system}.t3code-headless;
           t3code-headless-closure-info = self.packages.${system}.t3code-headless-closure-info;
         in
@@ -106,9 +129,50 @@
               '';
 
           nixfmt = pkgs.runCommand "paw-nixfmt-check" { nativeBuildInputs = [ pkgs.nixfmt ]; } ''
-            nixfmt --check ${./flake.nix} ${./nix/packages/t3code-headless.nix}
+            nixfmt --check \
+              ${./flake.nix} \
+              ${./nix/lib/eval-profile.nix} \
+              ${./nix/modules/profile.nix} \
+              ${./nix/packages/t3code-headless.nix} \
+              ${./nix/profiles/core.nix} \
+              ${./nix/profiles/platform-readonly.nix} \
+              ${./nix/profiles/runtime-core.nix}
             touch "$out"
           '';
+
+          profile-contract =
+            pkgs.runCommand "paw-profile-contract-check"
+              {
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                jq --exit-status '
+                  .core.contractVersion == "v0" and
+                  .core.authority.ceiling == "workspace-only" and
+                  .core.authority.externalMutation == false and
+                  .core.authority.productionAccess == false and
+                  .core.repositories.selection == "explicit" and
+                  .core.repositories.remoteGitPush == false and
+                  .core.network.defaultDenyEgress == true and
+                  .core.identity.platformRequired == false and
+                  ."platform-readonly".authority.ceiling == "read-only" and
+                  ."platform-readonly".authority.externalMutation == false and
+                  ."platform-readonly".authority.productionAccess == false and
+                  ."platform-readonly".repositories.remoteGitPush == false and
+                  ."platform-readonly".network.defaultDenyEgress == true and
+                  ."platform-readonly".identity.platformRequired == true and
+                  (.core.requiredAdapters | length) == 7 and
+                  (."platform-readonly".requiredAdapters | length) == 7
+                ' ${profilesJSON} >/dev/null
+
+                if grep -Fq '/nix/store/' ${profilesJSON}; then
+                  echo "Profile metadata contains a Nix store path" >&2
+                  exit 1
+                fi
+
+                mkdir "$out"
+                cp ${profilesJSON} "$out/profiles.json"
+              '';
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           inherit t3code-headless;
