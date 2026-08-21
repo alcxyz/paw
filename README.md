@@ -227,8 +227,10 @@ The script refuses to alter an existing workspace, creates only the ephemeral
 failure. It verifies rollout, inspection, restricted runtime identity, absent
 service-account credentials and host runtime sockets, empty RBAC, enforced
 default-deny egress, loopback access, in-memory pairing and revocation, clean
-logs, and state deletion. Pairing credentials pass directly from `paw` to `jq`
-and are never stored or printed.
+logs, and deletion of the namespace and PVC Kubernetes objects. Backing PV and
+storage reclamation remain storage-adapter requirements and are not claimed by
+this check. Pairing credentials pass directly from `paw` to `jq` and are never
+stored or printed.
 
 Inspect the evaluated, machine-readable profile contract:
 

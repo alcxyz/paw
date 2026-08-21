@@ -133,11 +133,11 @@ kubectl --context "$context" --namespace "$namespace" get pod workspace-0 \
       .securityContext.readOnlyRootFilesystem == true and
       .securityContext.capabilities.drop == ["ALL"] and
       ((.securityContext.capabilities.add // []) | length) == 0) and
-    ([$containers[].env[]?.name |
-      select(test(
-        "(TOKEN|SECRET|PASSWORD|CREDENTIAL|ACCESS_KEY|PRIVATE_KEY|API_?KEY|BEARER|PASSPHRASE)";
-        "i"))] |
-      length) == 0
+    all($containers[];
+      all(.env[]?;
+        .name == "HOME" or .name == "TMPDIR" or
+        .name == "XDG_CACHE_HOME" or .name == "XDG_CONFIG_HOME" or
+        .name == "XDG_DATA_HOME"))
   ' >/dev/null
 
 runtime_uid="$(

@@ -55,19 +55,20 @@ own authenticated TLS ingress rather than widening this local tunnel.
 
 One StatefulSet replica and one `ReadWriteOnce` claim express the T3
 single-writer contract. The development claim is marked ephemeral and is
-deleted through the PAW destroy workflow unless a future profile selects a
-different, explicit retention policy.
+deleted as a Kubernetes object through the PAW destroy workflow unless a future
+profile selects a different, explicit retention policy. Backing-volume
+reclamation is a storage-adapter responsibility and is not yet proven here.
 
 The manifest contract rejects host namespaces, host paths and ports, runtime
 sockets, device mounts, added capabilities, sysctls, host aliases, secret or
-service-account-token projections, credential-shaped environment variables,
-and `envFrom`. It also rechecks restricted execution and the absence of Secret
-objects for every reviewed profile/provider render.
+service-account-token projections, all CSI volumes, undeclared environment
+variables, and `envFrom`. It also rechecks restricted execution and the absence
+of Secret objects for every reviewed profile/provider render.
 
 `scripts/check-minikube-live.sh` complements those structural checks with an
 explicitly enabled live run. It refuses an existing `paw-workspace` namespace
 and proves the ephemeral create/inspect/connect/pair/revoke/destroy workflow,
 runtime UID, absent token and socket mounts, empty effective RBAC, enforced
-egress denial, clean logs, and state deletion. The target cluster must use a CNI
-that enforces NetworkPolicy and must already contain the selected development
-image.
+egress denial, clean logs, and namespace/PVC-object deletion. It does not yet
+claim backing-volume reclamation. The target cluster must use a CNI that
+enforces NetworkPolicy and must already contain the selected development image.
