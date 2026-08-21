@@ -1,13 +1,22 @@
 {
   dockerTools,
+  imageName ? "paw-core",
   lib,
+  profileName ? "core",
+  providerPackages ? [ ],
+  providers ? [ ],
   runtimePackages,
   t3codeHeadless,
 }:
 
+assert builtins.length providerPackages == builtins.length providers;
+
 let
   uid = 65532;
   gid = 65532;
+  providerVersions = map (
+    package: "${package.pname or (lib.getName package)}-${package.version or "unknown"}"
+  ) providerPackages;
   runtimeContents = [
     t3codeHeadless
     dockerTools.binSh
@@ -18,10 +27,11 @@ let
       extraGroupLines = [ "paw:x:${toString gid}:" ];
     })
   ]
-  ++ runtimePackages;
+  ++ runtimePackages
+  ++ providerPackages;
 in
 dockerTools.buildLayeredImage {
-  name = "paw-core";
+  name = imageName;
   tag = "dev";
   compressor = "gz";
   maxLayers = 80;
@@ -65,15 +75,23 @@ dockerTools.buildLayeredImage {
       "3773/tcp" = { };
     };
     Labels = {
-      "org.opencontainers.image.title" = "PAW core workspace";
+      "org.opencontainers.image.title" = "PAW ${profileName} workspace";
       "org.opencontainers.image.version" = "0.0.0-dev";
       "paw.alc.xyz/contract-version" = "v0";
-      "paw.alc.xyz/profile" = "core";
+      "paw.alc.xyz/profile" = profileName;
+      "paw.alc.xyz/provider-packages" = lib.concatStringsSep "," providerVersions;
+      "paw.alc.xyz/providers" = lib.concatStringsSep "," providers;
     };
   };
 
   passthru = {
-    inherit runtimeContents;
+    imageTag = "dev";
+    inherit
+      imageName
+      providerPackages
+      providers
+      runtimeContents
+      ;
   };
 
   meta = {
