@@ -20,6 +20,7 @@
   "profiles": [
     {
       "name": "core",
+      "description": "Headless T3 runtime and essential workspace tools.",
       "authorityCeiling": "workspace-only",
       "repositorySelection": "explicit",
       "remoteGitPush": false,
@@ -46,6 +47,7 @@
     },
     {
       "name": "platform-readonly",
+      "description": "Selected repositories and read-only non-production platform inspection.",
       "authorityCeiling": "read-only",
       "repositorySelection": "explicit",
       "remoteGitPush": false,

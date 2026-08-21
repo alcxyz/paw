@@ -24,6 +24,7 @@ type AuthorityClass struct {
 // Profile defines the security-relevant portion of a released workspace profile.
 type Profile struct {
 	Name                  string   `json:"name"`
+	Description           string   `json:"description"`
 	AuthorityCeiling      string   `json:"authorityCeiling"`
 	RepositorySelection   string   `json:"repositorySelection"`
 	RemoteGitPush         bool     `json:"remoteGitPush"`
@@ -117,6 +118,9 @@ func Validate(value Contract) error {
 
 	profiles := make(map[string]Profile, len(value.Profiles))
 	for _, profile := range value.Profiles {
+		if profile.Name == "" || profile.Description == "" {
+			return errors.New("profiles require a name and description")
+		}
 		if _, exists := profiles[profile.Name]; exists {
 			return fmt.Errorf("duplicate profile %q", profile.Name)
 		}
