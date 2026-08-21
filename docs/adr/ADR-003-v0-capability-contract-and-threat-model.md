@@ -250,3 +250,11 @@ The Go package rejects contracts that:
 
 Later deployment issues add manifest and live-cluster tests for the same
 invariants. Passing the document validator alone is not a security claim.
+
+The initial image contracts allow only `HOME`, `PATH`, `TMPDIR`, and the three
+declared XDG directory variables in image configuration. The initial manifest
+contract renders every reviewed profile/provider pair and rejects host/runtime
+access, privilege additions, static secret attachment paths, and
+credential-shaped environment variables. These structural checks do not
+replace the live identity, egress, state, log, revocation, or provider
+conformance tests required by issues #7 and #8.

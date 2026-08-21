@@ -6,6 +6,55 @@ paw_binary=${2:-}
 check_dir=$(mktemp -d "${TMPDIR:-/tmp}/paw-kubernetes-contract.XXXXXX")
 trap 'rm -rf -- "$check_dir"' EXIT
 
+assert_security_contract() {
+  jq --exit-status '
+    [.. | objects |
+      select(has("containers") or has("initContainers") or
+        has("ephemeralContainers")) |
+      (.containers[]?, .initContainers[]?, .ephemeralContainers[]?)] as $containers |
+    ($containers | length) > 0 and
+    all($containers[];
+      .securityContext.allowPrivilegeEscalation == false and
+      .securityContext.privileged == false and
+      .securityContext.readOnlyRootFilesystem == true and
+      (.securityContext.capabilities.drop | index("ALL")) != null and
+      ((.securityContext.capabilities.add // []) | length) == 0) and
+    all($containers[];
+      all(.env[]?;
+        .name == "HOME" or .name == "TMPDIR" or
+        .name == "XDG_CACHE_HOME" or .name == "XDG_CONFIG_HOME" or
+        .name == "XDG_DATA_HOME")) and
+    ([.. | objects | select(has("hostPath"))] | length) == 0 and
+    ([.. | objects | select(has("secretKeyRef") or has("secretRef") or
+      has("serviceAccountToken"))] | length) == 0 and
+    ([.. | objects | select(has("volumes")) | .volumes[]? |
+      select(has("secret") or has("csi"))] | length) == 0 and
+    ([.. | objects | select(has("projected")) | .projected.sources[]? |
+      select(has("secret"))] | length) == 0 and
+    ([.. | objects | select(has("envFrom"))] | length) == 0 and
+    ([.. | objects | select(
+      .hostNetwork == true or .hostPID == true or .hostIPC == true or
+      .shareProcessNamespace == true)] | length) == 0 and
+    ([.. | objects | select(has("hostPort") or has("hostIP"))] | length) == 0 and
+    ([.. | objects | select(has("volumeDevices"))] | length) == 0 and
+    ([.. | objects | select(has("sysctls"))] | length) == 0 and
+    ([.. | objects | select(has("hostAliases"))] | length) == 0 and
+    ([.. | strings | select(test(
+      "(docker\\.sock|containerd\\.sock|podman\\.sock|/var/run/docker|/run/containerd)";
+      "i"))] | length) == 0
+  ' "$1" >/dev/null
+}
+
+expect_security_rejection() {
+  local description=$1
+  local manifest=$2
+
+  if assert_security_contract "$manifest"; then
+    echo "security contract accepted $description" >&2
+    exit 1
+  fi
+}
+
 kubectl kustomize "$repo_root/deploy/base" >"$check_dir/base.yaml"
 kubectl kustomize "$repo_root/deploy/adapters/minikube" >"$check_dir/minikube.yaml"
 
@@ -25,6 +74,12 @@ jq --exit-status '
     .spec.template.spec.automountServiceAccountToken) == false and
   ([.[] | select(.kind == "StatefulSet")][0] |
     .spec.template.spec.securityContext.runAsNonRoot) == true and
+  ([.[] | select(.kind == "StatefulSet")][0] |
+    .spec.template.spec.securityContext.runAsUser) == 65532 and
+  ([.[] | select(.kind == "StatefulSet")][0] |
+    .spec.template.spec.securityContext.runAsGroup) == 65532 and
+  ([.[] | select(.kind == "StatefulSet")][0] |
+    .spec.template.spec.securityContext.fsGroup) == 65532 and
   ([.[] | select(.kind == "StatefulSet")][0] |
     .spec.template.spec.securityContext.seccompProfile.type) == "RuntimeDefault" and
   ([.[] | select(.kind == "StatefulSet")][0] |
@@ -58,9 +113,10 @@ jq --exit-status '
   ([.[] | select(.kind == "Secret")] | length) == 0 and
   ([.[] | select(.kind == "ConfigMap")][0] |
     .data.profile == "core" and .data.provider == "none") and
-  ([.. | objects | select(has("hostPath"))] | length) == 0 and
-  ([.. | objects | select(has("secretKeyRef") or has("secretRef"))] | length) == 0
+  ([.. | objects | select(has("hostPath"))] | length) == 0
 ' "$check_dir/base.json" >/dev/null
+
+assert_security_contract "$check_dir/base.json"
 
 jq --exit-status '
   ([.[] | select(.kind == "Namespace")][0] |
@@ -70,6 +126,52 @@ jq --exit-status '
   ([.[] | select(.kind == "StatefulSet")][0] |
     .spec.template.spec.containers[0].image) == "paw-core:dev"
 ' "$check_dir/minikube.json" >/dev/null
+
+assert_security_contract "$check_dir/minikube.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.volumes +=
+  [{"name":"forbidden-secret","secret":{"secretName":"forbidden"}}]
+  else . end)' \
+  "$check_dir/base.json" >"$check_dir/secret-volume.json"
+expect_security_rejection "a secret volume" "$check_dir/secret-volume.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.volumes +=
+  [{"name":"forbidden-projected","projected":{"sources":[
+    {"secret":{"name":"forbidden"}}
+  ]}}] else . end)' "$check_dir/base.json" >"$check_dir/projected-secret.json"
+expect_security_rejection "a projected secret" "$check_dir/projected-secret.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.volumes +=
+  [{"name":"forbidden-csi","csi":{
+    "driver":"secrets-store.csi.k8s.io",
+    "volumeAttributes":{"secretProviderClass":"forbidden"}
+  }}]
+  else . end)' \
+  "$check_dir/base.json" >"$check_dir/csi-volume.json"
+expect_security_rejection "a CSI volume" "$check_dir/csi-volume.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.containers[0].env +=
+  [{"name":"GH_PAT","value":"forbidden"}]
+  else . end)' \
+  "$check_dir/base.json" >"$check_dir/credential-env.json"
+expect_security_rejection "an undeclared environment variable" "$check_dir/credential-env.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.initContainers = [{
+    "name":"unsafe-init",
+    "image":"example.invalid/unsafe:latest",
+    "securityContext":{
+      "allowPrivilegeEscalation":false,
+      "privileged":true,
+      "readOnlyRootFilesystem":true,
+      "capabilities":{"drop":["ALL"]}
+    }
+  }] else . end)' "$check_dir/base.json" >"$check_dir/unsafe-init.json"
+expect_security_rejection "a privileged init container" "$check_dir/unsafe-init.json"
 
 if [[ -n "$paw_binary" ]]; then
   while read -r profile provider image; do
@@ -88,10 +190,17 @@ if [[ -n "$paw_binary" ]]; then
           .metadata.annotations["paw.alc.xyz/provider"] == $provider and
           .spec.template.metadata.annotations["paw.alc.xyz/profile"] == $profile and
           .spec.template.metadata.annotations["paw.alc.xyz/provider"] == $provider and
-          .spec.template.spec.containers[0].image == $image) and
+          .spec.template.spec.containers[0].image == $image and
+          .spec.template.spec.automountServiceAccountToken == false and
+          .spec.template.spec.containers[0].securityContext.privileged == false and
+          .spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true) and
         ([.[] | select(.kind == "ConfigMap")][0] |
-          .data.profile == $profile and .data.provider == $provider)
+          .data.profile == $profile and .data.provider == $provider) and
+        ([.[] | select(.kind == "Secret")] | length) == 0 and
+        ([.. | objects | select(has("hostPath") or has("secretKeyRef") or
+          has("secretRef") or has("serviceAccountToken"))] | length) == 0
       ' "$check_dir/$name.json" >/dev/null
+    assert_security_contract "$check_dir/$name.json"
   done <<'EOF'
 core none paw-core
 core codex paw-codex

@@ -472,6 +472,9 @@
                   .image.runtime.workingDirectory == "/workspace/work" and
                   .image.runtime.labels["paw.alc.xyz/providers"] == "" and
                   .image.runtime.labels["paw.alc.xyz/provider-packages"] == "" and
+                  (.image.runtime.environment | map(split("=")[0]) | sort) ==
+                    ["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME",
+                      "XDG_CONFIG_HOME", "XDG_DATA_HOME"] and
                   .image.runtime.command[0:5] ==
                     ["--log-level", "warn", "start", "--mode", "web"]
                 ' "$report" >/dev/null
@@ -552,6 +555,9 @@
                       .image.runtime.labels["paw.alc.xyz/profile"] == "core" and
                       .image.runtime.labels["paw.alc.xyz/providers"] == $provider and
                       (.image.runtime.labels["paw.alc.xyz/provider-packages"] | length) > 0 and
+                      (.image.runtime.environment | map(split("=")[0]) | sort) ==
+                        ["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME",
+                          "XDG_CONFIG_HOME", "XDG_DATA_HOME"] and
                       .image.runtime.command[0:5] ==
                         ["--log-level", "warn", "start", "--mode", "web"]
                     ' "$report" >/dev/null
@@ -656,6 +662,9 @@
                   .image.runtime.labels["paw.alc.xyz/profile"] ==
                     "platform-readonly" and
                   .image.runtime.labels["paw.alc.xyz/providers"] == "" and
+                  (.image.runtime.environment | map(split("=")[0]) | sort) ==
+                    ["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME",
+                      "XDG_CONFIG_HOME", "XDG_DATA_HOME"] and
                   .image.runtime.command[0:5] ==
                     ["--log-level", "warn", "start", "--mode", "web"]
                 ' "$report" >/dev/null
@@ -756,6 +765,9 @@
                         "platform-readonly" and
                       .image.runtime.labels["paw.alc.xyz/providers"] == $provider and
                       (.image.runtime.labels["paw.alc.xyz/provider-packages"] | length) > 0 and
+                      (.image.runtime.environment | map(split("=")[0]) | sort) ==
+                        ["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME",
+                          "XDG_CONFIG_HOME", "XDG_DATA_HOME"] and
                       .image.runtime.command[0:5] ==
                         ["--log-level", "warn", "start", "--mode", "web"]
                     ' "$report" >/dev/null

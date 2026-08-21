@@ -49,3 +49,9 @@ One StatefulSet replica and one `ReadWriteOnce` claim express the T3
 single-writer contract. The development claim is marked ephemeral and is
 deleted through the PAW destroy workflow unless a future profile selects a
 different, explicit retention policy.
+
+The manifest contract rejects host namespaces, host paths and ports, runtime
+sockets, device mounts, added capabilities, sysctls, host aliases, secret or
+service-account-token projections, credential-shaped environment variables,
+and `envFrom`. It also rechecks restricted execution and the absence of Secret
+objects for every reviewed profile/provider render.
