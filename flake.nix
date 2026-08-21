@@ -103,6 +103,30 @@
             t3codeHeadless = t3code-headless;
             runtimePackages = (profileEvaluations system).platform-readonly.runtimePackages;
           };
+          paw-platform-readonly-codex-image = pkgs.callPackage ./nix/images/paw-core.nix {
+            imageName = "paw-platform-readonly-codex";
+            profileName = "platform-readonly";
+            providerPackages = [ pkgs.codex ];
+            providers = [ "codex" ];
+            t3codeHeadless = t3code-headless;
+            runtimePackages = (profileEvaluations system).platform-readonly.runtimePackages;
+          };
+          paw-platform-readonly-claude-code-image = pkgs.callPackage ./nix/images/paw-core.nix {
+            imageName = "paw-platform-readonly-claude-code";
+            profileName = "platform-readonly";
+            providerPackages = [ pkgs.claude-code ];
+            providers = [ "claude-code" ];
+            t3codeHeadless = t3code-headless;
+            runtimePackages = (profileEvaluations system).platform-readonly.runtimePackages;
+          };
+          paw-platform-readonly-opencode-image = pkgs.callPackage ./nix/images/paw-core.nix {
+            imageName = "paw-platform-readonly-opencode";
+            profileName = "platform-readonly";
+            providerPackages = [ pkgs.opencode ];
+            providers = [ "opencode" ];
+            t3codeHeadless = t3code-headless;
+            runtimePackages = (profileEvaluations system).platform-readonly.runtimePackages;
+          };
           paw-core-closure-info = pkgs.closureInfo {
             rootPaths = paw-core-image.runtimeContents;
           };
@@ -117,6 +141,15 @@
           };
           paw-platform-readonly-closure-info = pkgs.closureInfo {
             rootPaths = paw-platform-readonly-image.runtimeContents;
+          };
+          paw-platform-readonly-codex-closure-info = pkgs.closureInfo {
+            rootPaths = paw-platform-readonly-codex-image.runtimeContents;
+          };
+          paw-platform-readonly-claude-code-closure-info = pkgs.closureInfo {
+            rootPaths = paw-platform-readonly-claude-code-image.runtimeContents;
+          };
+          paw-platform-readonly-opencode-closure-info = pkgs.closureInfo {
+            rootPaths = paw-platform-readonly-opencode-image.runtimeContents;
           };
           paw-core-image-report = pkgs.callPackage ./nix/images/report.nix {
             image = paw-core-image;
@@ -148,6 +181,24 @@
             reportScript = ./scripts/report-image.py;
             runtimeContents = paw-platform-readonly-image.runtimeContents;
           };
+          paw-platform-readonly-codex-image-report = pkgs.callPackage ./nix/images/report.nix {
+            image = paw-platform-readonly-codex-image;
+            name = paw-platform-readonly-codex-image.imageName;
+            reportScript = ./scripts/report-image.py;
+            runtimeContents = paw-platform-readonly-codex-image.runtimeContents;
+          };
+          paw-platform-readonly-claude-code-image-report = pkgs.callPackage ./nix/images/report.nix {
+            image = paw-platform-readonly-claude-code-image;
+            name = paw-platform-readonly-claude-code-image.imageName;
+            reportScript = ./scripts/report-image.py;
+            runtimeContents = paw-platform-readonly-claude-code-image.runtimeContents;
+          };
+          paw-platform-readonly-opencode-image-report = pkgs.callPackage ./nix/images/report.nix {
+            image = paw-platform-readonly-opencode-image;
+            name = paw-platform-readonly-opencode-image.imageName;
+            reportScript = ./scripts/report-image.py;
+            runtimeContents = paw-platform-readonly-opencode-image.runtimeContents;
+          };
         in
         {
           inherit paw;
@@ -168,8 +219,17 @@
             paw-opencode-image
             paw-opencode-image-report
             paw-platform-readonly-closure-info
+            paw-platform-readonly-claude-code-closure-info
+            paw-platform-readonly-claude-code-image
+            paw-platform-readonly-claude-code-image-report
+            paw-platform-readonly-codex-closure-info
+            paw-platform-readonly-codex-image
+            paw-platform-readonly-codex-image-report
             paw-platform-readonly-image
             paw-platform-readonly-image-report
+            paw-platform-readonly-opencode-closure-info
+            paw-platform-readonly-opencode-image
+            paw-platform-readonly-opencode-image-report
             t3code-headless
             t3code-headless-closure-info
             ;
@@ -206,6 +266,18 @@
           paw-opencode-image-report = self.packages.${system}.paw-opencode-image-report;
           paw-platform-readonly-closure-info = self.packages.${system}.paw-platform-readonly-closure-info;
           paw-platform-readonly-image-report = self.packages.${system}.paw-platform-readonly-image-report;
+          paw-platform-readonly-codex-closure-info =
+            self.packages.${system}.paw-platform-readonly-codex-closure-info;
+          paw-platform-readonly-codex-image-report =
+            self.packages.${system}.paw-platform-readonly-codex-image-report;
+          paw-platform-readonly-claude-code-closure-info =
+            self.packages.${system}.paw-platform-readonly-claude-code-closure-info;
+          paw-platform-readonly-claude-code-image-report =
+            self.packages.${system}.paw-platform-readonly-claude-code-image-report;
+          paw-platform-readonly-opencode-closure-info =
+            self.packages.${system}.paw-platform-readonly-opencode-closure-info;
+          paw-platform-readonly-opencode-image-report =
+            self.packages.${system}.paw-platform-readonly-opencode-image-report;
         in
         {
           paw = self.packages.${system}.paw;
@@ -631,6 +703,122 @@
                     compressedRegistryBytes: $compressed,
                     layerCount: $layers
                   }' >"$out/budgets.json"
+              '';
+
+          platform-provider-image-contract =
+            pkgs.runCommand "paw-platform-provider-image-contract"
+              {
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                check_image() {
+                  name=$1
+                  provider=$2
+                  package_pattern=$3
+                  report=$4
+                  closure_info=$5
+                  closure_budget=$6
+                  uncompressed_budget=$7
+                  compressed_budget=$8
+
+                  closure_bytes=$(jq -r '.runtimeClosure.narBytes' "$report")
+                  uncompressed_bytes=$(jq -r '.image.uncompressedLayerBytes' "$report")
+                  compressed_bytes=$(jq -r '.image.compressedRegistryBytes' "$report")
+                  layer_count=$(jq -r '.image.layerCount' "$report")
+
+                  if [ "$closure_bytes" -gt "$closure_budget" ]; then
+                    echo "$name closure exceeds its budget" >&2
+                    exit 1
+                  fi
+                  if [ "$uncompressed_bytes" -gt "$uncompressed_budget" ]; then
+                    echo "$name uncompressed image exceeds its budget" >&2
+                    exit 1
+                  fi
+                  if [ "$compressed_bytes" -gt "$compressed_budget" ]; then
+                    echo "$name registry transfer exceeds its budget" >&2
+                    exit 1
+                  fi
+                  if [ "$layer_count" -gt 80 ]; then
+                    echo "$name layer count exceeds its budget" >&2
+                    exit 1
+                  fi
+
+                  jq --exit-status \
+                    --arg name "$name" \
+                    --arg provider "$provider" '
+                      .image.name == $name and
+                      .image.architecture == "amd64" and
+                      .image.runtime.user == "65532:65532" and
+                      .image.runtime.workingDirectory == "/workspace/work" and
+                      .image.runtime.labels["paw.alc.xyz/profile"] ==
+                        "platform-readonly" and
+                      .image.runtime.labels["paw.alc.xyz/providers"] == $provider and
+                      (.image.runtime.labels["paw.alc.xyz/provider-packages"] | length) > 0 and
+                      .image.runtime.command[0:5] ==
+                        ["--log-level", "warn", "start", "--mode", "web"]
+                    ' "$report" >/dev/null
+
+                  for required_pattern in \
+                    "$package_pattern" \
+                    '-jq-' \
+                    '-kubectl-' \
+                    '-kubernetes-helm-' \
+                    '-kustomize-' \
+                    '-opentofu-' \
+                    '-yq-go-'; do
+                    if ! grep -Eq -- "$required_pattern" "$closure_info/store-paths"; then
+                      echo "$name lacks $required_pattern" >&2
+                      exit 1
+                    fi
+                  done
+
+                  forbidden='-(electron|t3code-desktop|pnpm|python3|nix|azure-cli|awscli2|google-cloud-sdk)-|-nodejs-[0-9]'
+                  case "$provider" in
+                    codex) forbidden="$forbidden|-claude-code-|-opencode-" ;;
+                    claude-code) forbidden="$forbidden|-codex-|-opencode-" ;;
+                    opencode) forbidden="$forbidden|-claude-code-|-codex-" ;;
+                  esac
+                  if grep -Eiq -- "$forbidden" "$closure_info/store-paths"; then
+                    echo "$name contains another provider, cloud-specific, build, desktop, or Nix runtime" >&2
+                    grep -Ei -- "$forbidden" "$closure_info/store-paths" >&2
+                    exit 1
+                  fi
+
+                  mkdir -p "$out/$name"
+                  cp "$report" "$out/$name/report.json"
+                  jq -n \
+                    --argjson closure "$closure_budget" \
+                    --argjson uncompressed "$uncompressed_budget" \
+                    --argjson compressed "$compressed_budget" \
+                    '{
+                      closureNarBytes: $closure,
+                      uncompressedLayerBytes: $uncompressed,
+                      compressedRegistryBytes: $compressed,
+                      layerCount: 80
+                    }' >"$out/$name/budgets.json"
+                }
+
+                check_image \
+                  paw-platform-readonly-codex codex '-codex-' \
+                  ${paw-platform-readonly-codex-image-report}/report.json \
+                  ${paw-platform-readonly-codex-closure-info} \
+                  $((1390 * 1024 * 1024)) \
+                  $((1460 * 1024 * 1024)) \
+                  $((470 * 1024 * 1024))
+                check_image \
+                  paw-platform-readonly-claude-code claude-code '-claude-code-' \
+                  ${paw-platform-readonly-claude-code-image-report}/report.json \
+                  ${paw-platform-readonly-claude-code-closure-info} \
+                  $((1230 * 1024 * 1024)) \
+                  $((1300 * 1024 * 1024)) \
+                  $((400 * 1024 * 1024))
+                check_image \
+                  paw-platform-readonly-opencode opencode '-opencode-' \
+                  ${paw-platform-readonly-opencode-image-report}/report.json \
+                  ${paw-platform-readonly-opencode-closure-info} \
+                  $((1085 * 1024 * 1024)) \
+                  $((1150 * 1024 * 1024)) \
+                  $((360 * 1024 * 1024))
               '';
         }
       );

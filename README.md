@@ -263,6 +263,18 @@ layers. Installing an executable does not grant mutation authority: the
 `read-only` ceiling, scoped identity, RBAC, egress policy, and supervised
 permissions remain independent enforcement boundaries.
 
+Useful released workspaces compose that capability with exactly one provider:
+
+```sh
+nix build .#paw-platform-readonly-codex-image
+nix build .#paw-platform-readonly-claude-code-image
+nix build .#paw-platform-readonly-opencode-image
+```
+
+These are complete OCI images, not runtime installers. They preserve the exact
+profile and provider labels and reuse identical Nix-derived layers across the
+core, provider-only, capability-only, and composed artifacts.
+
 ## Sensitive material
 
 This repository is private, but credentials, decrypted configuration, internal
