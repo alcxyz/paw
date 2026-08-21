@@ -25,6 +25,11 @@ paw workspace render --adapter minikube \
   --profile platform-readonly --provider opencode
 paw workspace create --adapter minikube --context minikube \
   --profile platform-readonly --provider opencode
+paw workspace inspect --adapter minikube --context minikube
+paw workspace connect --adapter minikube --context minikube
+paw workspace pair --adapter minikube --context minikube \
+  --ttl 10m --label browser
+paw workspace revoke --adapter minikube --context minikube --pairing-id ID
 ```
 
 Valid v0 profiles are `core` and `platform-readonly`; valid providers are
@@ -41,9 +46,12 @@ ingress or egress.
 
 The workload uses `t3 start` in authenticated web mode at warning log level.
 Unlike `t3 serve`, this avoids writing the automatically issued startup pairing
-credential into Kubernetes logs. PAW will mint short-lived pairing material on
-demand through an authenticated operator action and return it directly to the
-requesting user.
+credential into Kubernetes logs. `paw workspace pair` mints pairing material
+inside the selected pod and returns it directly through the operator's
+`kubectl exec` stream. The CLI defaults to a ten-minute TTL, rejects TTLs longer
+than one hour, and constructs a loopback URL matching `paw workspace connect`.
+The connection command binds only `127.0.0.1`; remote adapters must supply their
+own authenticated TLS ingress rather than widening this local tunnel.
 
 One StatefulSet replica and one `ReadWriteOnce` claim express the T3
 single-writer contract. The development claim is marked ephemeral and is

@@ -6,7 +6,9 @@ import (
 	"io"
 	"os/exec"
 	"slices"
+	"strconv"
 	"text/tabwriter"
+	"time"
 
 	deployment "git.alc.xyz/alcxyz/paw/deploy"
 	"git.alc.xyz/alcxyz/paw/internal/buildinfo"
@@ -85,7 +87,7 @@ Usage:
 Commands:
   doctor        Inspect local PAW dependencies
   profile       List or inspect built-in workspace profiles
-  workspace     Render, create, or destroy a workspace
+  workspace     Render and operate a workspace
   version       Print build version information
   help          Show this help`)
 }
@@ -94,12 +96,20 @@ type workspaceOptions struct {
 	adapter     string
 	context     string
 	deleteState bool
+	jsonOutput  bool
+	label       string
+	localPort   int
+	pairingID   string
 	profile     string
 	provider    string
+	ttl         string
 }
 
 func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) int {
-	if len(args) == 0 || !slices.Contains([]string{"render", "create", "destroy"}, args[0]) {
+	if len(args) == 0 || !slices.Contains(
+		[]string{"render", "create", "inspect", "connect", "pair", "revoke", "destroy"},
+		args[0],
+	) {
 		return usageError(stderr, workspaceUsage())
 	}
 	operation := args[0]
@@ -110,11 +120,14 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	if options.adapter == "" {
 		return usageError(stderr, "workspace requires --adapter minikube")
 	}
-	if operation == "render" && (options.context != "" || options.deleteState) {
-		return usageError(stderr, "workspace render does not accept --context or --delete-state")
+	if options.adapter != "minikube" {
+		return usageError(stderr, fmt.Sprintf("unsupported adapter %q", options.adapter))
 	}
 	if operation != "render" && options.context == "" {
-		return usageError(stderr, "workspace create and destroy require --context")
+		return usageError(stderr, fmt.Sprintf("workspace %s requires --context", operation))
+	}
+	if operation == "render" && options.context != "" {
+		return usageError(stderr, "workspace render does not accept --context")
 	}
 	if operation != "destroy" && options.deleteState {
 		return usageError(stderr, "--delete-state is only valid for workspace destroy")
@@ -122,14 +135,41 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	if operation == "destroy" && !options.deleteState {
 		return usageError(stderr, "workspace destroy requires --delete-state for the v0 ephemeral workspace")
 	}
-	if operation == "destroy" && (options.profile != "" || options.provider != "") {
-		return usageError(stderr, "workspace destroy does not accept --profile or --provider")
-	}
-	if operation != "destroy" && options.profile == "" {
+	if slices.Contains([]string{"render", "create"}, operation) && options.profile == "" {
 		return usageError(stderr, "workspace render and create require --profile")
 	}
-	if operation != "destroy" && options.provider == "" {
+	if slices.Contains([]string{"render", "create"}, operation) && options.provider == "" {
 		return usageError(stderr, "workspace render and create require --provider")
+	}
+	if !slices.Contains([]string{"render", "create"}, operation) &&
+		(options.profile != "" || options.provider != "") {
+		return usageError(stderr, fmt.Sprintf("workspace %s does not accept --profile or --provider", operation))
+	}
+	if operation != "pair" && (options.ttl != "" || options.label != "") {
+		return usageError(stderr, "--ttl and --label are only valid for workspace pair")
+	}
+	if operation != "revoke" && options.pairingID != "" {
+		return usageError(stderr, "--pairing-id is only valid for workspace revoke")
+	}
+	if operation == "revoke" && options.pairingID == "" {
+		return usageError(stderr, "workspace revoke requires --pairing-id")
+	}
+	if !slices.Contains([]string{"connect", "pair"}, operation) && options.localPort != 0 {
+		return usageError(stderr, "--local-port is only valid for workspace connect and pair")
+	}
+	if !slices.Contains([]string{"inspect", "pair"}, operation) && options.jsonOutput {
+		return usageError(stderr, "--json is only valid for workspace inspect and pair")
+	}
+
+	switch operation {
+	case "inspect":
+		return runWorkspaceInspect(options, stdout, stderr, deps)
+	case "connect":
+		return runWorkspaceConnect(options, stdout, stderr, deps)
+	case "pair":
+		return runWorkspacePair(options, stdout, stderr, deps)
+	case "revoke":
+		return runWorkspaceRevoke(options, stdout, stderr, deps)
 	}
 
 	selection := deployment.Selection{Profile: "core", Provider: "none"}
@@ -167,6 +207,99 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	return 0
 }
 
+func runWorkspaceInspect(options workspaceOptions, stdout, stderr io.Writer, deps dependencies) int {
+	output := "wide"
+	if options.jsonOutput {
+		output = "json"
+	}
+	args := []string{
+		"--context", options.context,
+		"--namespace", "paw-workspace",
+		"get",
+		"statefulset/workspace",
+		"pod/workspace-0",
+		"persistentvolumeclaim/workspace-state",
+		"service/t3",
+		"--output", output,
+	}
+	return runKubectl("inspect", args, stdout, stderr, deps)
+}
+
+func runWorkspaceConnect(options workspaceOptions, stdout, stderr io.Writer, deps dependencies) int {
+	localPort := selectedLocalPort(options.localPort)
+	args := []string{
+		"--context", options.context,
+		"--namespace", "paw-workspace",
+		"port-forward",
+		"--address", "127.0.0.1",
+		"service/t3",
+		fmt.Sprintf("%d:3773", localPort),
+	}
+	return runKubectl("connect", args, stdout, stderr, deps)
+}
+
+func runWorkspacePair(options workspaceOptions, stdout, stderr io.Writer, deps dependencies) int {
+	localPort := selectedLocalPort(options.localPort)
+	ttl := options.ttl
+	if ttl == "" {
+		ttl = "10m"
+	}
+	duration, err := time.ParseDuration(ttl)
+	if err != nil || duration <= 0 || duration > time.Hour {
+		return usageError(stderr, "--ttl must be a positive Go duration no longer than 1h")
+	}
+	if len(options.label) > 80 {
+		return usageError(stderr, "--label must not exceed 80 bytes")
+	}
+
+	args := []string{
+		"--context", options.context,
+		"--namespace", "paw-workspace",
+		"exec", "workspace-0", "--",
+		"t3", "auth", "pairing", "create",
+		"--base-dir", "/workspace/state/t3",
+		"--base-url", fmt.Sprintf("http://127.0.0.1:%d", localPort),
+		"--ttl", ttl,
+	}
+	if options.label != "" {
+		args = append(args, "--label", options.label)
+	}
+	if options.jsonOutput {
+		args = append(args, "--json")
+	}
+	return runKubectl("pair", args, stdout, stderr, deps)
+}
+
+func runWorkspaceRevoke(options workspaceOptions, stdout, stderr io.Writer, deps dependencies) int {
+	if len(options.pairingID) > 200 || options.pairingID[0] == '-' {
+		return usageError(stderr, "--pairing-id must be an identifier of at most 200 bytes")
+	}
+	args := []string{
+		"--context", options.context,
+		"--namespace", "paw-workspace",
+		"exec", "workspace-0", "--",
+		"t3", "auth", "pairing", "revoke",
+		"--base-dir", "/workspace/state/t3",
+		options.pairingID,
+	}
+	return runKubectl("revoke", args, stdout, stderr, deps)
+}
+
+func selectedLocalPort(port int) int {
+	if port == 0 {
+		return 3773
+	}
+	return port
+}
+
+func runKubectl(operation string, args []string, stdout, stderr io.Writer, deps dependencies) int {
+	if err := deps.runCommand("kubectl", args, stdout, stderr); err != nil {
+		fmt.Fprintf(stderr, "paw: kubectl %s failed: %v\n", operation, err)
+		return 1
+	}
+	return 0
+}
+
 func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 	var result workspaceOptions
 	for index := 0; index < len(args); index++ {
@@ -194,6 +327,42 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 				return workspaceOptions{}, fmt.Errorf("--delete-state may only be specified once")
 			}
 			result.deleteState = true
+		case "--json":
+			if result.jsonOutput {
+				return workspaceOptions{}, fmt.Errorf("--json may only be specified once")
+			}
+			result.jsonOutput = true
+		case "--label":
+			index++
+			if index == len(args) || args[index] == "" {
+				return workspaceOptions{}, fmt.Errorf("--label requires a value")
+			}
+			if result.label != "" {
+				return workspaceOptions{}, fmt.Errorf("--label may only be specified once")
+			}
+			result.label = args[index]
+		case "--local-port":
+			index++
+			if index == len(args) || args[index] == "" {
+				return workspaceOptions{}, fmt.Errorf("--local-port requires a value")
+			}
+			if result.localPort != 0 {
+				return workspaceOptions{}, fmt.Errorf("--local-port may only be specified once")
+			}
+			port, parseErr := strconv.Atoi(args[index])
+			if parseErr != nil || port < 1024 || port > 65535 {
+				return workspaceOptions{}, fmt.Errorf("--local-port must be between 1024 and 65535")
+			}
+			result.localPort = port
+		case "--pairing-id":
+			index++
+			if index == len(args) || args[index] == "" {
+				return workspaceOptions{}, fmt.Errorf("--pairing-id requires a value")
+			}
+			if result.pairingID != "" {
+				return workspaceOptions{}, fmt.Errorf("--pairing-id may only be specified once")
+			}
+			result.pairingID = args[index]
 		case "--profile":
 			index++
 			if index == len(args) || args[index] == "" {
@@ -212,6 +381,15 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 				return workspaceOptions{}, fmt.Errorf("--provider may only be specified once")
 			}
 			result.provider = args[index]
+		case "--ttl":
+			index++
+			if index == len(args) || args[index] == "" {
+				return workspaceOptions{}, fmt.Errorf("--ttl requires a value")
+			}
+			if result.ttl != "" {
+				return workspaceOptions{}, fmt.Errorf("--ttl may only be specified once")
+			}
+			result.ttl = args[index]
 		default:
 			return workspaceOptions{}, fmt.Errorf("unknown workspace option %q", args[index])
 		}
@@ -223,6 +401,10 @@ func workspaceUsage() string {
 	return `usage:
   paw workspace render --adapter minikube --profile PROFILE --provider PROVIDER
   paw workspace create --adapter minikube --context CONTEXT --profile PROFILE --provider PROVIDER
+  paw workspace inspect --adapter minikube --context CONTEXT [--json]
+  paw workspace connect --adapter minikube --context CONTEXT [--local-port PORT]
+  paw workspace pair --adapter minikube --context CONTEXT [--local-port PORT] [--ttl TTL] [--label LABEL] [--json]
+  paw workspace revoke --adapter minikube --context CONTEXT --pairing-id ID
   paw workspace destroy --adapter minikube --context CONTEXT --delete-state`
 }
 
