@@ -149,13 +149,14 @@ The baseline design includes:
 ## Repository status
 
 The project currently contains its architecture, agent safety rules, initial Go
-CLI, and reproducible flake checks. The repository structure and planned areas
-are:
+CLI, a focused T3 headless package, and reproducible flake checks. The repository
+structure and planned areas are:
 
 ```text
 cmd/paw/              Go CLI entry point
 contract/             Versioned machine-readable capability contracts
 internal/             CLI and adapter implementation
+nix/packages/         Focused runtime packages
 nix/modules/          PAW build-time modules
 nix/profiles/         Composed workspace profiles
 deploy/base/          Portable Kubernetes resources
@@ -199,6 +200,20 @@ Build or run the CLI:
 nix build .#paw
 nix run .#paw -- profile list
 ```
+
+Build the headless T3 server or inspect its closure metadata:
+
+```sh
+nix build .#t3code-headless
+nix build .#t3code-headless-closure-info
+cat result/total-nar-size
+```
+
+The package builds the T3 server and browser client without the Electron app.
+It retains adapter libraries used by the server, but bundled provider
+executables are removed so that Codex, Claude Code, and OpenCode can be supplied
+as independent image layers. The runtime contract check enforces a 450 MiB NAR
+closure ceiling for the initial `x86_64-linux` baseline.
 
 ## Sensitive material
 
