@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: t3
+  labels:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: workspace
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: workspace
+  ports:
+    - name: http
+      port: 3773
+      protocol: TCP
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: t3-headless
+  labels:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: workspace
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: workspace
+  ports:
+    - name: http
+      port: 3773
+      protocol: TCP
+      targetPort: http

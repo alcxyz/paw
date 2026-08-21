@@ -3,6 +3,9 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"io"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -83,6 +86,148 @@ func TestUnknownCommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "unknown command") {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+}
+
+func TestWorkspaceRender(t *testing.T) {
+	var stdout bytes.Buffer
+	var commandName string
+	var commandArgs []string
+	deps := workspaceTestDependencies(func(name string, args []string, output, _ io.Writer) error {
+		commandName = name
+		commandArgs = slices.Clone(args)
+		_, _ = io.WriteString(output, "rendered")
+		return nil
+	})
+
+	exitCode := runWithDependencies(
+		[]string{"workspace", "render", "--adapter", "minikube"},
+		&stdout,
+		&bytes.Buffer{},
+		deps,
+	)
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if commandName != "kubectl" || !slices.Equal(commandArgs, []string{"kustomize", "/manifests/minikube"}) {
+		t.Fatalf("unexpected command: %s %v", commandName, commandArgs)
+	}
+	if stdout.String() != "rendered" {
+		t.Fatalf("unexpected output %q", stdout.String())
+	}
+}
+
+func TestWorkspaceCreateRequiresExplicitContext(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		[]string{"workspace", "create", "--adapter", "minikube"},
+		&bytes.Buffer{},
+		&stderr,
+		workspaceTestDependencies(nil),
+	)
+
+	if exitCode != 2 || !strings.Contains(stderr.String(), "require --context") {
+		t.Fatalf("expected context usage error, got %d and %q", exitCode, stderr.String())
+	}
+}
+
+func TestWorkspaceCreateUsesSelectedContext(t *testing.T) {
+	var commandArgs []string
+	deps := workspaceTestDependencies(func(_ string, args []string, _, _ io.Writer) error {
+		commandArgs = slices.Clone(args)
+		return nil
+	})
+
+	exitCode := runWithDependencies(
+		[]string{"workspace", "create", "--adapter", "minikube", "--context", "minikube"},
+		&bytes.Buffer{},
+		&bytes.Buffer{},
+		deps,
+	)
+
+	expected := []string{"--context", "minikube", "apply", "-k", "/manifests/minikube"}
+	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
+		t.Fatalf("unexpected create result: exit=%d args=%v", exitCode, commandArgs)
+	}
+}
+
+func TestWorkspaceDestroyRequiresExplicitStateDeletion(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		[]string{"workspace", "destroy", "--adapter", "minikube", "--context", "minikube"},
+		&bytes.Buffer{},
+		&stderr,
+		workspaceTestDependencies(nil),
+	)
+
+	if exitCode != 2 || !strings.Contains(stderr.String(), "requires --delete-state") {
+		t.Fatalf("expected state deletion usage error, got %d and %q", exitCode, stderr.String())
+	}
+}
+
+func TestWorkspaceDestroyDeletesExactKustomization(t *testing.T) {
+	var commandArgs []string
+	deps := workspaceTestDependencies(func(_ string, args []string, _, _ io.Writer) error {
+		commandArgs = slices.Clone(args)
+		return nil
+	})
+
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "destroy",
+			"--adapter", "minikube",
+			"--context", "minikube",
+			"--delete-state",
+		},
+		&bytes.Buffer{},
+		&bytes.Buffer{},
+		deps,
+	)
+
+	expected := []string{
+		"--context", "minikube",
+		"delete", "-k", "/manifests/minikube",
+		"--ignore-not-found=true",
+	}
+	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
+		t.Fatalf("unexpected destroy result: exit=%d args=%v", exitCode, commandArgs)
+	}
+}
+
+func TestWorkspaceReportsKubectlFailure(t *testing.T) {
+	deps := workspaceTestDependencies(func(string, []string, io.Writer, io.Writer) error {
+		return errors.New("command failed")
+	})
+	var stderr bytes.Buffer
+
+	exitCode := runWithDependencies(
+		[]string{"workspace", "render", "--adapter", "minikube"},
+		&bytes.Buffer{},
+		&stderr,
+		deps,
+	)
+
+	if exitCode != 1 || !strings.Contains(stderr.String(), "kubectl render failed") {
+		t.Fatalf("expected kubectl failure, got %d and %q", exitCode, stderr.String())
+	}
+}
+
+func workspaceTestDependencies(runner commandRunner) dependencies {
+	if runner == nil {
+		runner = func(string, []string, io.Writer, io.Writer) error {
+			return fmt.Errorf("unexpected command")
+		}
+	}
+	return dependencies{
+		lookPath:   alwaysAvailable,
+		runCommand: runner,
+		materialize: func(adapter string) (string, func(), error) {
+			if adapter != "minikube" {
+				return "", func() {}, fmt.Errorf("unsupported adapter %q", adapter)
+			}
+			return "/manifests/minikube", func() {}, nil
+		},
 	}
 }
 

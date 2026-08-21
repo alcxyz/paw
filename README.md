@@ -64,6 +64,9 @@ The initial foundation provides:
 paw version
 paw doctor
 paw profile list
+paw workspace render --adapter minikube
+paw workspace create --adapter minikube --context minikube
+paw workspace destroy --adapter minikube --context minikube --delete-state
 ```
 
 ### Nix flake

@@ -124,7 +124,11 @@
                 nativeBuildInputs = [ pkgs.markdownlint-cli ];
               }
               ''
-                markdownlint ${./README.md} ${./AGENTS.md} ${./docs}/adr/*.md
+                markdownlint \
+                  ${./README.md} \
+                  ${./AGENTS.md} \
+                  ${./deploy}/README.md \
+                  ${./docs}/adr/*.md
                 touch "$out"
               '';
 
@@ -172,6 +176,20 @@
 
                 mkdir "$out"
                 cp ${profilesJSON} "$out/profiles.json"
+              '';
+
+          kubernetes-contract =
+            pkgs.runCommand "paw-kubernetes-contract-check"
+              {
+                nativeBuildInputs = with pkgs; [
+                  jq
+                  kubectl
+                  yq-go
+                ];
+              }
+              ''
+                bash ${./scripts/check-kubernetes-contract.sh} ${./.}
+                touch "$out"
               '';
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
@@ -232,10 +250,12 @@
               go
               gopls
               gotools
+              jq
               kubectl
               markdownlint-cli
               minikube
               nixfmt
+              yq-go
             ];
           };
         }
