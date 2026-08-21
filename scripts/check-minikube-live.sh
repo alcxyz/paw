@@ -36,11 +36,16 @@ fi
 context="$1"
 paw_binary="$2"
 local_port="${3:-43773}"
+egress_probe_host="${PAW_EGRESS_PROBE_HOST:-1.1.1.1}"
+egress_probe_port="${PAW_EGRESS_PROBE_PORT:-443}"
 
 [[ -n "$context" ]] || fail "CONTEXT must not be empty"
 [[ -x "$paw_binary" ]] || fail "PAW_BINARY must be an executable file"
 [[ "$local_port" =~ ^[0-9]+$ ]] || fail "LOCAL_PORT must be numeric"
 ((local_port >= 1024 && local_port <= 65535)) || fail "LOCAL_PORT must be between 1024 and 65535"
+[[ "$egress_probe_host" =~ ^[A-Za-z0-9.-]+$ ]] || fail "PAW_EGRESS_PROBE_HOST contains unsupported characters"
+[[ "$egress_probe_port" =~ ^[0-9]+$ ]] || fail "PAW_EGRESS_PROBE_PORT must be numeric"
+((egress_probe_port >= 1 && egress_probe_port <= 65535)) || fail "PAW_EGRESS_PROBE_PORT must be between 1 and 65535"
 
 for dependency in curl jq kubectl; do
   command -v "$dependency" >/dev/null || fail "$dependency is required"
@@ -61,6 +66,45 @@ workspace_created=true
 kubectl --context "$context" --namespace "$namespace" rollout status \
   statefulset/workspace --timeout=240s >/dev/null
 
+kubectl --context "$context" --namespace "$namespace" apply -f - >/dev/null <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: egress-positive-control
+  labels:
+    app.kubernetes.io/name: paw-live-conformance
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: probe
+      image: paw-core:dev
+      imagePullPolicy: Never
+      command: ["/bin/sh", "-c", "sleep 600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        privileged: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: 5m
+          memory: 8Mi
+        limits:
+          cpu: 100m
+          memory: 32Mi
+EOF
+
+kubectl --context "$context" --namespace "$namespace" wait \
+  --for=condition=Ready pod/egress-positive-control --timeout=120s >/dev/null
+
 "$paw_binary" workspace inspect \
   --adapter minikube \
   --context "$context" \
@@ -74,6 +118,8 @@ kubectl --context "$context" --namespace "$namespace" rollout status \
 kubectl --context "$context" --namespace "$namespace" get pod workspace-0 \
   --output json |
   jq --exit-status '
+    [.spec.containers[]?, .spec.initContainers[]?,
+      .spec.ephemeralContainers[]?] as $containers |
     .status.phase == "Running" and
     .status.containerStatuses[0].ready == true and
     .spec.automountServiceAccountToken == false and
@@ -81,12 +127,16 @@ kubectl --context "$context" --namespace "$namespace" get pod workspace-0 \
     .spec.securityContext.runAsGroup == 65532 and
     .spec.securityContext.fsGroup == 65532 and
     .spec.securityContext.seccompProfile.type == "RuntimeDefault" and
-    .spec.containers[0].securityContext.allowPrivilegeEscalation == false and
-    .spec.containers[0].securityContext.privileged == false and
-    .spec.containers[0].securityContext.readOnlyRootFilesystem == true and
-    .spec.containers[0].securityContext.capabilities.drop == ["ALL"] and
-    ([.spec.containers[].env[]?.name |
-      select(test("(TOKEN|SECRET|PASSWORD|CREDENTIAL|ACCESS_KEY|PRIVATE_KEY)"; "i"))] |
+    all($containers[];
+      .securityContext.allowPrivilegeEscalation == false and
+      .securityContext.privileged == false and
+      .securityContext.readOnlyRootFilesystem == true and
+      .securityContext.capabilities.drop == ["ALL"] and
+      ((.securityContext.capabilities.add // []) | length) == 0) and
+    ([$containers[].env[]?.name |
+      select(test(
+        "(TOKEN|SECRET|PASSWORD|CREDENTIAL|ACCESS_KEY|PRIVATE_KEY|API_?KEY|BEARER|PASSPHRASE)";
+        "i"))] |
       length) == 0
   ' >/dev/null
 
@@ -122,9 +172,24 @@ secret_objects="$(
 )"
 [[ -z "$secret_objects" ]] || fail "workspace namespace contains Secret objects"
 
-if kubectl --context "$context" --namespace "$namespace" exec workspace-0 -- \
-  curl --silent --show-error --fail --max-time 5 https://example.com \
-  >/dev/null 2>&1; then
+probe_egress() {
+  local pod=$1
+
+  # $1 and $2 in the command belong to the remote shell.
+  # shellcheck disable=SC2016
+  kubectl --context "$context" --namespace "$namespace" exec "$pod" -- \
+    bash -ceu '
+      command -v timeout >/dev/null
+      timeout 5 bash -c "</dev/tcp/$1/$2"
+    ' paw-egress-probe "$egress_probe_host" "$egress_probe_port" \
+    >/dev/null 2>&1
+}
+
+if ! probe_egress egress-positive-control; then
+  fail "positive-control pod cannot reach $egress_probe_host:$egress_probe_port; egress enforcement cannot be evaluated"
+fi
+
+if probe_egress workspace-0; then
   fail "default-deny egress is not enforced"
 fi
 
