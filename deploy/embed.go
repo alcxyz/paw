@@ -7,11 +7,29 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
-//go:embed base/*.yaml adapters/minikube/*.yaml
+//go:embed base/*.yaml adapters/*/*.yaml
 var manifests embed.FS
+
+const (
+	// AdapterKubernetes is the portable lifecycle implemented through standard
+	// Kubernetes resources and an explicitly selected context.
+	AdapterKubernetes = "kubernetes"
+	// AdapterMinikube retains local development image behavior as a
+	// compatibility and reference-environment adapter.
+	AdapterMinikube = "minikube"
+)
+
+var (
+	immutableDigest     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	immutableRepository = regexp.MustCompile(
+		`^(?:localhost|[a-z0-9]+(?:[.-][a-z0-9]+)*)(?::[0-9]+)?` +
+			`(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`,
+	)
+)
 
 // Selection is the immutable profile/provider composition requested by an
 // operator. Values are resolved through the reviewed image matrix below; they
@@ -21,7 +39,16 @@ type Selection struct {
 	Provider string
 }
 
-var developmentImages = map[Selection]string{
+// ManifestRequest selects an adapter, reviewed image composition, and optional
+// immutable released image. Only the generic Kubernetes adapter accepts an
+// ImageReference; Minikube binds the corresponding local development image.
+type ManifestRequest struct {
+	Adapter        string
+	Selection      Selection
+	ImageReference string
+}
+
+var imageNames = map[Selection]string{
 	{Profile: "core", Provider: "none"}:                     "paw-core",
 	{Profile: "core", Provider: "codex"}:                    "paw-codex",
 	{Profile: "core", Provider: "claude-code"}:              "paw-claude-code",
@@ -32,9 +59,9 @@ var developmentImages = map[Selection]string{
 	{Profile: "platform-readonly", Provider: "opencode"}:    "paw-platform-readonly-opencode",
 }
 
-// DevelopmentImage returns the reviewed local image name for a selection.
-func DevelopmentImage(selection Selection) (string, error) {
-	image, exists := developmentImages[selection]
+// ImageName returns the reviewed image name for a profile/provider selection.
+func ImageName(selection Selection) (string, error) {
+	image, exists := imageNames[selection]
 	if !exists {
 		return "", fmt.Errorf(
 			"unsupported profile/provider selection %q/%q",
@@ -43,6 +70,45 @@ func DevelopmentImage(selection Selection) (string, error) {
 		)
 	}
 	return image, nil
+}
+
+// SupportsAdapter reports whether the CLI implements the named lifecycle
+// adapter. It makes no claim that the selected cluster conforms to PAW.
+func SupportsAdapter(adapter string) bool {
+	return adapter == AdapterKubernetes || adapter == AdapterMinikube
+}
+
+// ValidateReleasedImageReference validates an immutable OCI image reference
+// against the reviewed image composition selected by the profile and provider.
+// It returns the repository and digest in the form expected by Kustomize.
+func ValidateReleasedImageReference(selection Selection, reference string) (string, string, error) {
+	expected, err := ImageName(selection)
+	if err != nil {
+		return "", "", err
+	}
+	if strings.ContainsAny(reference, " \t\r\n") || strings.Contains(reference, "://") {
+		return "", "", fmt.Errorf("released image must be an OCI reference without a URL scheme")
+	}
+
+	repository, digest, found := strings.Cut(reference, "@")
+	if !found || repository == "" || !immutableDigest.MatchString(digest) || strings.Contains(digest, "@") {
+		return "", "", fmt.Errorf("released image must use NAME@sha256:<64 lowercase hex characters>")
+	}
+	if !immutableRepository.MatchString(repository) {
+		return "", "", fmt.Errorf("released image must use a lowercase fully qualified repository")
+	}
+	basename := repository[strings.LastIndex(repository, "/")+1:]
+	if strings.Contains(basename, ":") {
+		return "", "", fmt.Errorf("released image must not include a mutable tag")
+	}
+	if basename != expected {
+		return "", "", fmt.Errorf(
+			"released image %q does not match profile/provider image %q",
+			basename,
+			expected,
+		)
+	}
+	return repository, digest, nil
 }
 
 // Materialize writes the embedded resources to an isolated temporary directory.
@@ -54,10 +120,21 @@ func Materialize(adapter string) (string, func(), error) {
 // MaterializeSelection writes the embedded resources and binds one reviewed
 // profile/provider image composition to the selected adapter.
 func MaterializeSelection(adapter string, selection Selection) (string, func(), error) {
-	if adapter != "minikube" {
-		return "", func() {}, fmt.Errorf("unsupported adapter %q", adapter)
+	return MaterializeManifest(ManifestRequest{Adapter: adapter, Selection: selection})
+}
+
+// MaterializeManifest writes the embedded resources and binds one reviewed
+// profile/provider image composition to the requested adapter.
+func MaterializeManifest(request ManifestRequest) (string, func(), error) {
+	if !SupportsAdapter(request.Adapter) {
+		return "", func() {}, fmt.Errorf("unsupported adapter %q", request.Adapter)
 	}
-	image, err := DevelopmentImage(selection)
+	if request.Adapter == AdapterMinikube && request.ImageReference != "" {
+		return "", func() {}, fmt.Errorf("adapter %q does not accept a released image", request.Adapter)
+	}
+
+	selection := request.Selection
+	image, err := ImageName(selection)
 	if err != nil {
 		return "", func() {}, err
 	}
@@ -97,22 +174,32 @@ func MaterializeSelection(adapter string, selection Selection) (string, func(), 
 		return "", func() {}, fmt.Errorf("materialize manifests: %w", err)
 	}
 
-	adapterPath := filepath.Join(root, "adapters", adapter)
+	adapterPath := filepath.Join(root, "adapters", request.Adapter)
 	kustomizationPath := filepath.Join(adapterPath, "kustomization.yaml")
 	kustomization, err := os.ReadFile(kustomizationPath)
 	if err != nil {
 		cleanup()
 		return "", func() {}, fmt.Errorf("read adapter kustomization: %w", err)
 	}
-	configured := strings.Replace(
-		string(kustomization),
-		"newName: paw-core",
-		"newName: "+image,
-		1,
-	)
-	if configured == string(kustomization) && image != "paw-core" {
-		cleanup()
-		return "", func() {}, fmt.Errorf("adapter image placeholder is missing")
+	configured := string(kustomization)
+	if request.Adapter == AdapterMinikube {
+		configured = strings.Replace(configured, "newName: paw-core", "newName: "+image, 1)
+		if configured == string(kustomization) && image != "paw-core" {
+			cleanup()
+			return "", func() {}, fmt.Errorf("adapter image placeholder is missing")
+		}
+	}
+	if request.ImageReference != "" {
+		repository, digest, validationErr := ValidateReleasedImageReference(selection, request.ImageReference)
+		if validationErr != nil {
+			cleanup()
+			return "", func() {}, validationErr
+		}
+		configured += fmt.Sprintf(`images:
+  - name: registry.invalid/paw/workspace
+    newName: %s
+    digest: %s
+`, repository, digest)
 	}
 	configured += fmt.Sprintf(`patches:
   - target:

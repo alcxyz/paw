@@ -20,8 +20,28 @@ Render the portable or local resources with:
 
 ```sh
 kubectl kustomize deploy/base
+kubectl kustomize deploy/adapters/kubernetes
 kubectl kustomize deploy/adapters/minikube
 ```
+
+The checked-in portable base and generic adapter deliberately retain the
+invalid zero-digest image placeholder and are safe to inspect but not deploy.
+The CLI replaces that placeholder only when the operator supplies an immutable
+profile-matching released image:
+
+```sh
+paw workspace render --adapter kubernetes \
+  --profile platform-readonly --provider opencode \
+  --image-ref "$PAW_IMAGE_REF"
+paw workspace create --adapter kubernetes --context CONTEXT \
+  --profile platform-readonly --provider opencode \
+  --image-ref "$PAW_IMAGE_REF"
+```
+
+The reference must be fully qualified, use `@sha256:…` rather than a mutable
+tag, and end with the reviewed image name selected by the profile/provider pair.
+Image loading, registry authentication, and release provenance remain
+environment responsibilities outside the generic lifecycle.
 
 The PAW CLI binds one reviewed local image composition rather than accepting an
 arbitrary image name:
@@ -41,7 +61,8 @@ paw workspace revoke --adapter minikube --context minikube --pairing-id ID
 Valid v0 profiles are `core` and `platform-readonly`; valid providers are
 `none`, `codex`, `claude-code`, and `opencode`. The rendered image and the
 StatefulSet and ConfigMap metadata are derived from that exact pair. Released
-remote adapters replace the local development tag with an immutable digest.
+environments use the generic adapter and immutable image reference instead of
+the local development tag.
 
 The initial base remains unreachable because its network policy denies all
 traffic. Client-access and egress adapters must add narrowly scoped policy for

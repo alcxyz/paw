@@ -17,6 +17,12 @@ import (
 	"git.alc.xyz/alcxyz/paw/internal/repository"
 )
 
+const testImageDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func testReleasedImage(name string) string {
+	return "registry.example/paw/" + name + "@" + testImageDigest
+}
+
 func TestVersion(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -148,6 +154,23 @@ func TestDoctorIgnoresMissingOptionalDependency(t *testing.T) {
 	}
 }
 
+func TestDoctorRequiresKubectlForWorkspaceLifecycle(t *testing.T) {
+	lookup := func(name string) (string, error) {
+		if name == "kubectl" {
+			return "", errors.New("not found")
+		}
+		return "/bin/" + name, nil
+	}
+	var stdout bytes.Buffer
+
+	exitCode := run([]string{"doctor"}, &stdout, &bytes.Buffer{}, lookup)
+
+	if exitCode != 1 || !strings.Contains(stdout.String(), "kubectl") ||
+		!strings.Contains(stdout.String(), "missing") {
+		t.Fatalf("doctor did not require kubectl: exit=%d output=%q", exitCode, stdout.String())
+	}
+}
+
 func TestUnknownCommand(t *testing.T) {
 	var stderr bytes.Buffer
 
@@ -195,6 +218,103 @@ func TestWorkspaceRender(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRenderUsesGenericKubernetesAdapterAndImmutableImage(t *testing.T) {
+	var request deployment.ManifestRequest
+	var commandArgs []string
+	deps := workspaceTestDependencies(func(_ string, args []string, _, _ io.Writer) error {
+		commandArgs = slices.Clone(args)
+		return nil
+	})
+	deps.materialize = func(actual deployment.ManifestRequest) (string, func(), error) {
+		request = actual
+		return "/manifests/kubernetes", func() {}, nil
+	}
+	image := testReleasedImage("paw-platform-readonly-codex")
+
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "render",
+			"--adapter", "kubernetes",
+			"--profile", "platform-readonly",
+			"--provider", "codex",
+			"--image-ref", image,
+		},
+		&bytes.Buffer{},
+		&bytes.Buffer{},
+		deps,
+	)
+
+	expectedRequest := deployment.ManifestRequest{
+		Adapter: deployment.AdapterKubernetes,
+		Selection: deployment.Selection{
+			Profile:  "platform-readonly",
+			Provider: "codex",
+		},
+		ImageReference: image,
+	}
+	if exitCode != 0 || request != expectedRequest {
+		t.Fatalf("unexpected generic render: exit=%d request=%#v", exitCode, request)
+	}
+	if !slices.Equal(commandArgs, []string{"kustomize", "/manifests/kubernetes"}) {
+		t.Fatalf("unexpected render arguments: %v", commandArgs)
+	}
+}
+
+func TestWorkspaceGenericRenderRequiresImmutableMatchingImage(t *testing.T) {
+	tests := []struct {
+		name     string
+		image    string
+		expected string
+	}{
+		{name: "missing", expected: "requires --image-ref"},
+		{name: "mutable tag", image: "registry.example/paw/paw-core:latest", expected: "NAME@sha256"},
+		{name: "wrong composition", image: testReleasedImage("paw-codex"), expected: "does not match"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			args := []string{
+				"workspace", "render",
+				"--adapter", "kubernetes",
+				"--profile", "core",
+				"--provider", "none",
+			}
+			if test.image != "" {
+				args = append(args, "--image-ref", test.image)
+			}
+			var stderr bytes.Buffer
+			exitCode := runWithDependencies(
+				args,
+				&bytes.Buffer{},
+				&stderr,
+				workspaceTestDependencies(nil),
+			)
+			if exitCode != 2 || !strings.Contains(stderr.String(), test.expected) {
+				t.Fatalf("expected %q error, got %d and %q", test.expected, exitCode, stderr.String())
+			}
+		})
+	}
+}
+
+func TestWorkspaceMinikubeRejectsReleasedImageOverride(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "render",
+			"--adapter", "minikube",
+			"--profile", "core",
+			"--provider", "none",
+			"--image-ref", testReleasedImage("paw-core"),
+		},
+		&bytes.Buffer{},
+		&stderr,
+		workspaceTestDependencies(nil),
+	)
+	if exitCode != 2 || !strings.Contains(stderr.String(), "does not accept --image-ref") {
+		t.Fatalf("expected Minikube image error, got %d and %q", exitCode, stderr.String())
+	}
+}
+
 func TestWorkspaceCreateRequiresExplicitContext(t *testing.T) {
 	var stderr bytes.Buffer
 	exitCode := runWithDependencies(
@@ -221,8 +341,8 @@ func TestWorkspaceCreateUsesSelectedContext(t *testing.T) {
 		commandArgs = slices.Clone(args)
 		return nil
 	})
-	deps.materialize = func(_ string, actual deployment.Selection) (string, func(), error) {
-		selection = actual
+	deps.materialize = func(actual deployment.ManifestRequest) (string, func(), error) {
+		selection = actual.Selection
 		return "/manifests/minikube", func() {}, nil
 	}
 
@@ -285,6 +405,24 @@ func TestWorkspaceRejectsUnknownSelection(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRejectsNetworkingImplementationAsAdapter(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "inspect",
+			"--adapter", "calico",
+			"--context", "paw-local",
+		},
+		&bytes.Buffer{},
+		&stderr,
+		workspaceTestDependencies(nil),
+	)
+
+	if exitCode != 2 || !strings.Contains(stderr.String(), "unsupported adapter") {
+		t.Fatalf("expected adapter rejection, got %d and %q", exitCode, stderr.String())
+	}
+}
+
 func TestWorkspaceDestroyRequiresExplicitStateDeletion(t *testing.T) {
 	var stderr bytes.Buffer
 	exitCode := runWithDependencies(
@@ -309,8 +447,8 @@ func TestWorkspaceDestroyDeletesExactKustomization(t *testing.T) {
 	exitCode := runWithDependencies(
 		[]string{
 			"workspace", "destroy",
-			"--adapter", "minikube",
-			"--context", "minikube",
+			"--adapter", "kubernetes",
+			"--context", "paw-k3s",
 			"--delete-state",
 		},
 		&bytes.Buffer{},
@@ -319,8 +457,8 @@ func TestWorkspaceDestroyDeletesExactKustomization(t *testing.T) {
 	)
 
 	expected := []string{
-		"--context", "minikube",
-		"delete", "-k", "/manifests/minikube",
+		"--context", "paw-k3s",
+		"delete", "-k", "/manifests/kubernetes",
 		"--ignore-not-found=true",
 	}
 	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
@@ -338,7 +476,7 @@ func TestWorkspaceInspectUsesExactResources(t *testing.T) {
 	exitCode := runWithDependencies(
 		[]string{
 			"workspace", "inspect",
-			"--adapter", "minikube",
+			"--adapter", "kubernetes",
 			"--context", "paw-local",
 			"--json",
 		},
@@ -528,6 +666,7 @@ func TestWorkspaceOptionsDoNotConsumeAnotherFlagAsAValue(t *testing.T) {
 	for _, option := range []string{
 		"--adapter",
 		"--context",
+		"--image-ref",
 		"--label",
 		"--local-port",
 		"--pairing-id",
@@ -587,7 +726,7 @@ func TestWorkspaceRepositoryAddUsesExplicitSelection(t *testing.T) {
 	exitCode := runWithDependencies(
 		[]string{
 			"workspace", "repository", "add",
-			"--adapter", "minikube",
+			"--adapter", "kubernetes",
 			"--context", "paw-local",
 			"--source", "/selected/repository",
 			"--revision", "refs/heads/main",
@@ -687,11 +826,11 @@ func workspaceTestDependencies(runner commandRunner) dependencies {
 	return dependencies{
 		lookPath:   alwaysAvailable,
 		runCommand: runner,
-		materialize: func(adapter string, _ deployment.Selection) (string, func(), error) {
-			if adapter != "minikube" {
-				return "", func() {}, fmt.Errorf("unsupported adapter %q", adapter)
+		materialize: func(request deployment.ManifestRequest) (string, func(), error) {
+			if !deployment.SupportsAdapter(request.Adapter) {
+				return "", func() {}, fmt.Errorf("unsupported adapter %q", request.Adapter)
 			}
-			return "/manifests/minikube", func() {}, nil
+			return "/manifests/" + request.Adapter, func() {}, nil
 		},
 		addRepo: func(repository.Request, io.Writer, io.Writer) error {
 			return fmt.Errorf("unexpected repository materialization")
