@@ -63,3 +63,11 @@ sockets, device mounts, added capabilities, sysctls, host aliases, secret or
 service-account-token projections, credential-shaped environment variables,
 and `envFrom`. It also rechecks restricted execution and the absence of Secret
 objects for every reviewed profile/provider render.
+
+`scripts/check-minikube-live.sh` complements those structural checks with an
+explicitly enabled live run. It refuses an existing `paw-workspace` namespace
+and proves the ephemeral create/inspect/connect/pair/revoke/destroy workflow,
+runtime UID, absent token and socket mounts, empty effective RBAC, enforced
+egress denial, clean logs, and state deletion. The target cluster must use a CNI
+that enforces NetworkPolicy and must already contain the selected development
+image.
