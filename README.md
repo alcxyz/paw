@@ -184,6 +184,12 @@ go vet ./...
 nix flake check
 ```
 
+Inspect the evaluated, machine-readable profile contract:
+
+```sh
+nix eval --json .#pawProfiles.x86_64-linux | jq
+```
+
 Build or run the CLI:
 
 ```sh
