@@ -88,6 +88,7 @@ def main() -> None:
                 "workingDirectory": config["config"]["WorkingDir"],
                 "entrypoint": config["config"]["Entrypoint"],
                 "command": config["config"]["Cmd"],
+                "environment": config["config"].get("Env", []),
                 "labels": config["config"].get("Labels", {}),
             },
         },

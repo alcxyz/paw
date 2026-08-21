@@ -26,6 +26,12 @@ jq --exit-status '
   ([.[] | select(.kind == "StatefulSet")][0] |
     .spec.template.spec.securityContext.runAsNonRoot) == true and
   ([.[] | select(.kind == "StatefulSet")][0] |
+    .spec.template.spec.securityContext.runAsUser) == 65532 and
+  ([.[] | select(.kind == "StatefulSet")][0] |
+    .spec.template.spec.securityContext.runAsGroup) == 65532 and
+  ([.[] | select(.kind == "StatefulSet")][0] |
+    .spec.template.spec.securityContext.fsGroup) == 65532 and
+  ([.[] | select(.kind == "StatefulSet")][0] |
     .spec.template.spec.securityContext.seccompProfile.type) == "RuntimeDefault" and
   ([.[] | select(.kind == "StatefulSet")][0] |
     .spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation) == false and
@@ -59,7 +65,24 @@ jq --exit-status '
   ([.[] | select(.kind == "ConfigMap")][0] |
     .data.profile == "core" and .data.provider == "none") and
   ([.. | objects | select(has("hostPath"))] | length) == 0 and
-  ([.. | objects | select(has("secretKeyRef") or has("secretRef"))] | length) == 0
+  ([.. | objects | select(has("secretKeyRef") or has("secretRef"))] | length) == 0 and
+  ([.. | objects | select(has("serviceAccountToken"))] | length) == 0 and
+  ([.. | objects | select(has("envFrom"))] | length) == 0 and
+  ([.. | objects | select(
+    .hostNetwork == true or .hostPID == true or .hostIPC == true or
+    .shareProcessNamespace == true)] | length) == 0 and
+  ([.. | objects | select(has("hostPort") or has("hostIP"))] | length) == 0 and
+  ([.. | objects | select(has("volumeDevices"))] | length) == 0 and
+  ([.. | objects | select(has("sysctls"))] | length) == 0 and
+  ([.. | objects | select(has("hostAliases"))] | length) == 0 and
+  ([.. | objects | select(has("capabilities")) |
+    .capabilities.add[]?] | length) == 0 and
+  ([.. | objects | select(has("env")) | .env[]? |
+    select(.name | test("(TOKEN|SECRET|PASSWORD|CREDENTIAL|ACCESS_KEY|PRIVATE_KEY)"; "i"))] |
+    length) == 0 and
+  ([.. | strings |
+    select(test("(docker\\.sock|containerd\\.sock|podman\\.sock|/var/run/docker|/run/containerd)"; "i"))] |
+    length) == 0
 ' "$check_dir/base.json" >/dev/null
 
 jq --exit-status '
@@ -88,9 +111,15 @@ if [[ -n "$paw_binary" ]]; then
           .metadata.annotations["paw.alc.xyz/provider"] == $provider and
           .spec.template.metadata.annotations["paw.alc.xyz/profile"] == $profile and
           .spec.template.metadata.annotations["paw.alc.xyz/provider"] == $provider and
-          .spec.template.spec.containers[0].image == $image) and
+          .spec.template.spec.containers[0].image == $image and
+          .spec.template.spec.automountServiceAccountToken == false and
+          .spec.template.spec.containers[0].securityContext.privileged == false and
+          .spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true) and
         ([.[] | select(.kind == "ConfigMap")][0] |
-          .data.profile == $profile and .data.provider == $provider)
+          .data.profile == $profile and .data.provider == $provider) and
+        ([.[] | select(.kind == "Secret")] | length) == 0 and
+        ([.. | objects | select(has("hostPath") or has("secretKeyRef") or
+          has("secretRef") or has("serviceAccountToken"))] | length) == 0
       ' "$check_dir/$name.json" >/dev/null
   done <<'EOF'
 core none paw-core
