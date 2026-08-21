@@ -44,9 +44,15 @@
               mainProgram = "paw";
             };
           };
+          t3code-headless = pkgs.callPackage ./nix/packages/t3code-headless.nix { };
+          t3code-headless-closure-info = pkgs.closureInfo {
+            rootPaths = [ t3code-headless ];
+          };
         in
         {
           inherit paw;
+          inherit t3code-headless;
+          inherit t3code-headless-closure-info;
           default = paw;
         }
       );
@@ -64,6 +70,8 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          t3code-headless = self.packages.${system}.t3code-headless;
+          t3code-headless-closure-info = self.packages.${system}.t3code-headless-closure-info;
         in
         {
           paw = self.packages.${system}.paw;
@@ -98,8 +106,53 @@
               '';
 
           nixfmt = pkgs.runCommand "paw-nixfmt-check" { nativeBuildInputs = [ pkgs.nixfmt ]; } ''
-            nixfmt --check ${./flake.nix}
+            nixfmt --check ${./flake.nix} ${./nix/packages/t3code-headless.nix}
             touch "$out"
+          '';
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          inherit t3code-headless;
+
+          t3code-headless-runtime-contract = pkgs.runCommand "t3code-headless-runtime-contract" { } ''
+            closure_bytes=$(<${t3code-headless-closure-info}/total-nar-size)
+            closure_budget=$((450 * 1024 * 1024))
+
+            if [ "$closure_bytes" -gt "$closure_budget" ]; then
+              echo "T3 headless closure is $closure_bytes bytes; budget is $closure_budget" >&2
+              exit 1
+            fi
+
+            forbidden='-(electron|t3code-desktop|claude-code|codex|opencode|pnpm|python3)-|-nodejs-[0-9]'
+            if grep -Eiq -- "$forbidden" \
+              ${t3code-headless-closure-info}/store-paths; then
+              echo "T3 headless closure contains a desktop, provider, or build dependency:" >&2
+              grep -Ei -- "$forbidden" \
+                ${t3code-headless-closure-info}/store-paths >&2
+              exit 1
+            fi
+
+            test -f ${t3code-headless}/libexec/t3code/dist/client/index.html
+            test -x \
+              ${t3code-headless}/libexec/t3code/dist/resource-monitor/t3-resource-monitor
+            test ! -e ${t3code-headless}/bin/t3code-desktop
+
+            if find ${t3code-headless}/libexec/t3code \
+              -path '*/node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-*' \
+              -print -quit | grep -q .; then
+              echo "T3 headless contains the Agent SDK's bundled Claude executable" >&2
+              exit 1
+            fi
+
+            if find ${t3code-headless}/libexec/t3code \
+              -path '*/node-pty/prebuilds' -print -quit | grep -q .; then
+              echo "T3 headless contains foreign node-pty prebuilds" >&2
+              exit 1
+            fi
+
+            mkdir "$out"
+            cp ${t3code-headless-closure-info}/store-paths "$out/store-paths"
+            printf '%s\n' "$closure_bytes" > "$out/total-nar-size"
+            printf '%s\n' "$closure_budget" > "$out/closure-budget"
           '';
         }
       );
