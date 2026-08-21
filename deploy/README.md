@@ -69,6 +69,7 @@ of Secret objects for every reviewed profile/provider render.
 explicitly enabled live run. It refuses an existing `paw-workspace` namespace
 and proves the ephemeral create/inspect/connect/pair/revoke/destroy workflow,
 runtime UID, absent token and socket mounts, empty effective RBAC, enforced
-egress denial, clean logs, and namespace/PVC-object deletion. It does not yet
-claim backing-volume reclamation. The target cluster must use a CNI that
-enforces NetworkPolicy and must already contain the selected development image.
+egress denial, streamed repository selection, clean logs, and
+namespace/PVC-object deletion. It does not yet claim backing-volume
+reclamation. The target cluster must use a CNI that enforces NetworkPolicy and
+must already contain the selected development image.

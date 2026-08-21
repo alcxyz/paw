@@ -49,6 +49,7 @@
             src = ./.;
             vendorHash = null;
             subPackages = [ "cmd/paw" ];
+            nativeCheckInputs = [ pkgs.gitMinimal ];
             checkPhase = ''
               runHook preCheck
               go test ./...

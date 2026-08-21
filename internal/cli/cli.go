@@ -17,16 +17,19 @@ import (
 	deployment "git.alc.xyz/alcxyz/paw/deploy"
 	"git.alc.xyz/alcxyz/paw/internal/buildinfo"
 	"git.alc.xyz/alcxyz/paw/internal/profile"
+	"git.alc.xyz/alcxyz/paw/internal/repository"
 )
 
 type pathLookup func(string) (string, error)
 type commandRunner func(string, []string, io.Writer, io.Writer) error
 type manifestMaterializer func(string, deployment.Selection) (string, func(), error)
+type repositoryAdder func(repository.Request, io.Writer, io.Writer) error
 
 type dependencies struct {
 	lookPath    pathLookup
 	runCommand  commandRunner
 	materialize manifestMaterializer
+	addRepo     repositoryAdder
 }
 
 // Run executes the PAW CLI and returns a process exit code.
@@ -39,6 +42,7 @@ func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
 		lookPath:    lookPath,
 		runCommand:  executeCommand,
 		materialize: deployment.MaterializeSelection,
+		addRepo:     repository.Add,
 	})
 }
 
@@ -110,6 +114,9 @@ type workspaceOptions struct {
 }
 
 func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) int {
+	if len(args) > 0 && args[0] == "repository" {
+		return runWorkspaceRepository(args[1:], stdout, stderr, deps)
+	}
 	if len(args) == 0 || !slices.Contains(
 		[]string{"render", "create", "inspect", "connect", "pair", "revoke", "destroy"},
 		args[0],
@@ -206,6 +213,57 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	}
 	if err := deps.runCommand("kubectl", commandArgs, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "paw: kubectl %s failed: %v\n", operation, err)
+		return 1
+	}
+	return 0
+}
+
+func runWorkspaceRepository(args []string, stdout, stderr io.Writer, deps dependencies) int {
+	if len(args) == 0 || args[0] != "add" {
+		return usageError(stderr, workspaceRepositoryUsage())
+	}
+
+	var adapter string
+	var context string
+	var name string
+	var revision string
+	var source string
+	values := map[string]*string{
+		"--adapter":  &adapter,
+		"--context":  &context,
+		"--name":     &name,
+		"--revision": &revision,
+		"--source":   &source,
+	}
+	for index := 1; index < len(args); index++ {
+		target, exists := values[args[index]]
+		if !exists {
+			return usageError(stderr, fmt.Sprintf("unknown repository option %q", args[index]))
+		}
+		index++
+		if index == len(args) || args[index] == "" {
+			return usageError(stderr, fmt.Sprintf("%s requires a value", args[index-1]))
+		}
+		if *target != "" {
+			return usageError(stderr, fmt.Sprintf("%s may only be specified once", args[index-1]))
+		}
+		*target = args[index]
+	}
+
+	if adapter == "" || context == "" || name == "" || revision == "" || source == "" {
+		return usageError(stderr, workspaceRepositoryUsage())
+	}
+	if adapter != "minikube" {
+		return usageError(stderr, fmt.Sprintf("unsupported adapter %q", adapter))
+	}
+	request := repository.Request{
+		Context:  context,
+		Name:     name,
+		Revision: revision,
+		Source:   source,
+	}
+	if err := deps.addRepo(request, stdout, stderr); err != nil {
+		fmt.Fprintf(stderr, "paw: materialize repository: %v\n", err)
 		return 1
 	}
 	return 0
@@ -413,7 +471,12 @@ func workspaceUsage() string {
   paw workspace connect --adapter minikube --context CONTEXT [--local-port PORT]
   paw workspace pair --adapter minikube --context CONTEXT [--local-port PORT] [--ttl TTL] [--label LABEL] [--json]
   paw workspace revoke --adapter minikube --context CONTEXT --pairing-id ID
+  paw workspace repository add --adapter minikube --context CONTEXT --source PATH --revision REF --name NAME
   paw workspace destroy --adapter minikube --context CONTEXT --delete-state`
+}
+
+func workspaceRepositoryUsage() string {
+	return "usage: paw workspace repository add --adapter minikube --context CONTEXT --source PATH --revision REF --name NAME"
 }
 
 func executeCommand(name string, args []string, stdout, stderr io.Writer) error {
