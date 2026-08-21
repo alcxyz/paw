@@ -97,7 +97,7 @@ Service through the explicitly named Kubernetes context. The v0 destroy command
 requires `--delete-state` because the Minikube workspace state policy is
 ephemeral.
 
-The proposed local repository-source workflow accepts only the canonical root
+The local repository-source workflow accepts only the canonical root
 of an explicitly selected Git worktree and a named branch, tag, or
 remote-tracking ref. It resolves that ref to a commit, streams a Git bundle
 directly through the Kubernetes exec channel, checks out the commit detached,
@@ -239,11 +239,10 @@ The script refuses to alter an existing workspace, creates only the ephemeral
 failure. It verifies rollout, inspection, restricted runtime identity, absent
 service-account credentials and host runtime sockets, empty RBAC, enforced
 default-deny egress, loopback access, streamed repository materialization,
-in-memory pairing and revocation, clean
-logs, and deletion of the namespace and PVC Kubernetes objects. Backing PV and
-storage reclamation remain storage-adapter requirements and are not claimed by
-this check. Pairing credentials pass directly from `paw` to `jq` and are never
-stored or printed.
+in-memory pairing and revocation, clean logs, and deletion of the namespace and
+PVC Kubernetes objects. Backing PV and storage reclamation remain
+storage-adapter requirements and are not claimed by this check. Pairing
+credentials pass directly from `paw` to `jq` and are never stored or printed.
 
 Inspect the evaluated, machine-readable profile contract:
 

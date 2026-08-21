@@ -1,6 +1,6 @@
 # ADR-004: Streamed Git bundle repository materialization
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-21
 
 ## Context
@@ -15,7 +15,7 @@ host checkout, placing Git credentials in the pod, enabling unrestricted Git
 egress, or introducing a second deployment model. It must also preserve the v0
 prohibition on remote Git push.
 
-## Proposed decision
+## Decision
 
 Add an operator-side command with an exact source, named revision, destination,
 adapter, and Kubernetes context:

@@ -5,7 +5,7 @@
 | [ADR-001](ADR-001-kubernetes-native-collaborative-ai-workspaces.md) | Kubernetes-native collaborative AI workspaces | Accepted |
 | [ADR-002](ADR-002-go-cli-and-nix-flake-build-architecture.md) | Go CLI and Nix flake build architecture | Accepted |
 | [ADR-003](ADR-003-v0-capability-contract-and-threat-model.md) | PAW v0 capability contract and threat model | Accepted |
-| [ADR-004](ADR-004-streamed-git-bundle-repository-materialization.md) | Streamed Git bundle repository materialization | Proposed |
+| [ADR-004](ADR-004-streamed-git-bundle-repository-materialization.md) | Streamed Git bundle repository materialization | Accepted |
 
 ## Statuses
 
