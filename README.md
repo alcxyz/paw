@@ -213,6 +213,25 @@ go vet ./...
 nix flake check
 ```
 
+An opt-in live conformance check covers the Minikube lifecycle and security
+boundary. It requires a context whose CNI enforces NetworkPolicy, with
+`paw-core:dev` already loaded and no existing `paw-workspace` namespace:
+
+```sh
+go build -o /tmp/paw-live ./cmd/paw
+PAW_LIVE_TEST=1 scripts/check-minikube-live.sh minikube /tmp/paw-live
+```
+
+The script refuses to alter an existing workspace, creates only the ephemeral
+`core`/`none` selection, and cleans up the workspace it created on success or
+failure. It verifies rollout, inspection, restricted runtime identity, absent
+service-account credentials and host runtime sockets, empty RBAC, enforced
+default-deny egress, loopback access, in-memory pairing and revocation, clean
+logs, and deletion of the namespace and PVC Kubernetes objects. Backing PV and
+storage reclamation remain storage-adapter requirements and are not claimed by
+this check. Pairing credentials pass directly from `paw` to `jq` and are never
+stored or printed.
+
 Inspect the evaluated, machine-readable profile contract:
 
 ```sh

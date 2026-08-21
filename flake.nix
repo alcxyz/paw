@@ -375,10 +375,13 @@
                 nativeBuildInputs = with pkgs; [
                   jq
                   kubectl
+                  shellcheck
                   yq-go
                 ];
               }
               ''
+                bash -n ${./scripts/check-minikube-live.sh}
+                shellcheck ${./scripts/check-minikube-live.sh}
                 bash ${./scripts/check-kubernetes-contract.sh} \
                   ${./.} \
                   ${self.packages.${system}.paw}/bin/paw
