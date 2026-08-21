@@ -6,6 +6,13 @@
   paw.profile = {
     name = "platform-readonly";
     requiresPlatformIdentity = true;
-    runtimePackages = [ pkgs.jq ];
+    runtimePackages = with pkgs; [
+      jq
+      kubectl
+      kubernetes-helm
+      kustomize
+      opentofu
+      yq-go
+    ];
   };
 }
