@@ -153,8 +153,27 @@ The package contains the server, browser client, JavaScript adapter libraries,
 native host `node-pty` build, and resource monitor. It excludes Electron,
 desktop resources, provider executables, the Claude Agent SDK's optional bundled
 Claude executable, foreign `node-pty` prebuilds, and build-time Node, pnpm, and
-Python closures. Provider-image and OCI-size budgets remain to be established
-when those images are implemented.
+Python closures.
+
+The first provider-free `paw-core` image for `linux/amd64`, measured on
+2026-08-21, establishes these values and budgets:
+
+| Metric | Measured | Budget |
+| --- | ---: | ---: |
+| Unique runtime-closure NAR | 551,754,704 bytes | 592,445,440 bytes |
+| Uncompressed OCI layers | 613,201,920 bytes | 655,360,000 bytes |
+| Compressed registry transfer | 173,219,750 bytes | 188,743,680 bytes |
+| Layers | 80 | 80 |
+
+The compressed-transfer metric is the OCI manifest, config, and individually
+gzip-compressed layer descriptors produced from the Docker-compatible archive.
+The archive itself is 165,224,667 bytes. The image includes the headless T3
+runtime, a reduced Git build with HTTPS support, SSH, Bash, certificates, and
+basic shell tools. It runs as UID/GID 65532 and excludes provider executables,
+Electron, the Nix CLI and daemon, Python, pnpm, and build toolchains.
+
+These are initial `amd64` budgets. Provider-image budgets and native `arm64`
+measurements must be recorded before publication of the common image index.
 
 ### 6. Package providers without packaging credentials
 

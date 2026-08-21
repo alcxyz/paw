@@ -8,7 +8,7 @@ identity required by the selected profile.
 The base deliberately uses an invalid registry and zero digest. This prevents a
 bare base from silently pulling an unreviewed `latest` image. Released adapters
 replace it with an immutable image digest. The Minikube adapter uses the local
-development image name `paw-workspace:dev`; it is not a release manifest.
+development image name `paw-core:dev`; it is not a release manifest.
 
 Render the portable or local resources with:
 

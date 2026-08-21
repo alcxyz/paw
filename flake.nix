@@ -66,12 +66,31 @@
           t3code-headless-closure-info = pkgs.closureInfo {
             rootPaths = [ t3code-headless ];
           };
+          paw-core-image = pkgs.callPackage ./nix/images/paw-core.nix {
+            t3codeHeadless = t3code-headless;
+            runtimePackages = (profileEvaluations system).core.runtimePackages;
+          };
+          paw-core-closure-info = pkgs.closureInfo {
+            rootPaths = paw-core-image.runtimeContents;
+          };
+          paw-core-image-report = pkgs.callPackage ./nix/images/report.nix {
+            image = paw-core-image;
+            reportScript = ./scripts/report-image.py;
+            runtimeContents = paw-core-image.runtimeContents;
+          };
         in
         {
           inherit paw;
-          inherit t3code-headless;
-          inherit t3code-headless-closure-info;
           default = paw;
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          inherit
+            paw-core-closure-info
+            paw-core-image
+            paw-core-image-report
+            t3code-headless
+            t3code-headless-closure-info
+            ;
         }
       );
 
@@ -95,12 +114,14 @@
           );
           t3code-headless = self.packages.${system}.t3code-headless;
           t3code-headless-closure-info = self.packages.${system}.t3code-headless-closure-info;
+          paw-core-closure-info = self.packages.${system}.paw-core-closure-info;
+          paw-core-image-report = self.packages.${system}.paw-core-image-report;
         in
         {
           paw = self.packages.${system}.paw;
 
           gofmt = pkgs.runCommand "paw-gofmt-check" { nativeBuildInputs = [ pkgs.go ]; } ''
-            unformatted=$(gofmt -l ${./cmd} ${./internal})
+            unformatted=$(gofmt -l ${./cmd} ${./contract} ${./deploy} ${./internal})
             if [ -n "$unformatted" ]; then
               echo "The following Go files are not formatted:" >&2
               echo "$unformatted" >&2
@@ -135,6 +156,8 @@
           nixfmt = pkgs.runCommand "paw-nixfmt-check" { nativeBuildInputs = [ pkgs.nixfmt ]; } ''
             nixfmt --check \
               ${./flake.nix} \
+              ${./nix/images/paw-core.nix} \
+              ${./nix/images/report.nix} \
               ${./nix/lib/eval-profile.nix} \
               ${./nix/modules/profile.nix} \
               ${./nix/packages/t3code-headless.nix} \
@@ -236,6 +259,72 @@
             printf '%s\n' "$closure_bytes" > "$out/total-nar-size"
             printf '%s\n' "$closure_budget" > "$out/closure-budget"
           '';
+        }
+        // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+
+          paw-core-image-contract =
+            pkgs.runCommand "paw-core-image-contract"
+              {
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                report=${paw-core-image-report}/report.json
+                closure_budget=$((565 * 1024 * 1024))
+                uncompressed_budget=$((625 * 1024 * 1024))
+                compressed_budget=$((180 * 1024 * 1024))
+                layer_budget=80
+
+                closure_bytes=$(jq -r '.runtimeClosure.narBytes' "$report")
+                uncompressed_bytes=$(jq -r '.image.uncompressedLayerBytes' "$report")
+                compressed_bytes=$(jq -r '.image.compressedRegistryBytes' "$report")
+                layer_count=$(jq -r '.image.layerCount' "$report")
+
+                if [ "$closure_bytes" -gt "$closure_budget" ]; then
+                  echo "paw-core closure exceeds its budget" >&2
+                  exit 1
+                fi
+                if [ "$uncompressed_bytes" -gt "$uncompressed_budget" ]; then
+                  echo "paw-core uncompressed image exceeds its budget" >&2
+                  exit 1
+                fi
+                if [ "$compressed_bytes" -gt "$compressed_budget" ]; then
+                  echo "paw-core registry transfer exceeds its budget" >&2
+                  exit 1
+                fi
+                if [ "$layer_count" -gt "$layer_budget" ]; then
+                  echo "paw-core layer count exceeds its budget" >&2
+                  exit 1
+                fi
+
+                jq --exit-status '
+                  .image.architecture == "amd64" and
+                  .image.runtime.user == "65532:65532" and
+                  .image.runtime.workingDirectory == "/workspace/work" and
+                  .image.runtime.command[0:5] ==
+                    ["--log-level", "warn", "start", "--mode", "web"]
+                ' "$report" >/dev/null
+
+                forbidden='-(electron|t3code-desktop|claude-code|codex|opencode|pnpm|python3|nix)-|-nodejs-[0-9]'
+                if grep -Eiq -- "$forbidden" ${paw-core-closure-info}/store-paths; then
+                  echo "paw-core contains a desktop, provider, build, or Nix runtime" >&2
+                  grep -Ei -- "$forbidden" ${paw-core-closure-info}/store-paths >&2
+                  exit 1
+                fi
+
+                mkdir "$out"
+                cp "$report" "$out/report.json"
+                jq -n \
+                  --argjson closure "$closure_budget" \
+                  --argjson uncompressed "$uncompressed_budget" \
+                  --argjson compressed "$compressed_budget" \
+                  --argjson layers "$layer_budget" \
+                  '{
+                    closureNarBytes: $closure,
+                    uncompressedLayerBytes: $uncompressed,
+                    compressedRegistryBytes: $compressed,
+                    layerCount: $layers
+                  }' >"$out/budgets.json"
+              '';
         }
       );
 

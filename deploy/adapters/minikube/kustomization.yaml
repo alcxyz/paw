@@ -6,5 +6,5 @@ resources:
   - ../../base
 images:
   - name: registry.invalid/paw/workspace
-    newName: paw-workspace
+    newName: paw-core
     newTag: dev

@@ -61,5 +61,5 @@ jq --exit-status '
   ([.[] | select(.kind == "StatefulSet")] | length) == 1 and
   ([.[] | select(.kind == "StatefulSet")][0] | .spec.replicas) == 1 and
   ([.[] | select(.kind == "StatefulSet")][0] |
-    .spec.template.spec.containers[0].image) == "paw-workspace:dev"
+    .spec.template.spec.containers[0].image) == "paw-core:dev"
 ' "$check_dir/minikube.json" >/dev/null
