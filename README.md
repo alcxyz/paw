@@ -74,6 +74,9 @@ paw workspace connect --adapter minikube --context minikube
 paw workspace pair --adapter minikube --context minikube \
   --ttl 10m --label mac-browser
 paw workspace revoke --adapter minikube --context minikube --pairing-id ID
+paw workspace repository add --adapter minikube --context minikube \
+  --source /absolute/path/to/repository --revision refs/heads/main \
+  --name platform
 paw workspace destroy --adapter minikube --context minikube --delete-state
 ```
 
@@ -93,6 +96,15 @@ credential through the same selected pod and context.
 Service through the explicitly named Kubernetes context. The v0 destroy command
 requires `--delete-state` because the Minikube workspace state policy is
 ephemeral.
+
+The local repository-source workflow accepts only the canonical root
+of an explicitly selected Git worktree and a named branch, tag, or
+remote-tracking ref. It resolves that ref to a commit, streams a Git bundle
+directly through the Kubernetes exec channel, checks out the commit detached,
+and removes the bundle remote. Uncommitted files, Git configuration, credential
+helpers, and an ambient host mount do not enter the workspace. See
+[ADR-004](docs/adr/ADR-004-streamed-git-bundle-repository-materialization.md)
+for the decision under review and its limitations.
 
 ### Nix flake
 
@@ -226,11 +238,11 @@ The script refuses to alter an existing workspace, creates only the ephemeral
 `core`/`none` selection, and cleans up the workspace it created on success or
 failure. It verifies rollout, inspection, restricted runtime identity, absent
 service-account credentials and host runtime sockets, empty RBAC, enforced
-default-deny egress, loopback access, in-memory pairing and revocation, clean
-logs, and deletion of the namespace and PVC Kubernetes objects. Backing PV and
-storage reclamation remain storage-adapter requirements and are not claimed by
-this check. Pairing credentials pass directly from `paw` to `jq` and are never
-stored or printed.
+default-deny egress, loopback access, streamed repository materialization,
+in-memory pairing and revocation, clean logs, and deletion of the namespace and
+PVC Kubernetes objects. Backing PV and storage reclamation remain
+storage-adapter requirements and are not claimed by this check. Pairing
+credentials pass directly from `paw` to `jq` and are never stored or printed.
 
 Inspect the evaluated, machine-readable profile contract:
 

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	deployment "git.alc.xyz/alcxyz/paw/deploy"
+	"git.alc.xyz/alcxyz/paw/internal/repository"
 )
 
 func TestVersion(t *testing.T) {
@@ -573,6 +574,87 @@ func TestExecuteCommandForwardsTerminationSignal(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRepositoryAddUsesExplicitSelection(t *testing.T) {
+	var actual repository.Request
+	deps := workspaceTestDependencies(nil)
+	deps.addRepo = func(request repository.Request, output, _ io.Writer) error {
+		actual = request
+		_, _ = io.WriteString(output, "materialized")
+		return nil
+	}
+	var stdout bytes.Buffer
+
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "repository", "add",
+			"--adapter", "minikube",
+			"--context", "paw-local",
+			"--source", "/selected/repository",
+			"--revision", "refs/heads/main",
+			"--name", "platform",
+		},
+		&stdout,
+		&bytes.Buffer{},
+		deps,
+	)
+
+	expected := repository.Request{
+		Context:  "paw-local",
+		Name:     "platform",
+		Revision: "refs/heads/main",
+		Source:   "/selected/repository",
+	}
+	if exitCode != 0 || actual != expected {
+		t.Fatalf("unexpected repository request: exit=%d request=%#v", exitCode, actual)
+	}
+	if stdout.String() != "materialized" {
+		t.Fatalf("repository output was not returned: %q", stdout.String())
+	}
+}
+
+func TestWorkspaceRepositoryAddRequiresCompleteSelection(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "repository", "add",
+			"--adapter", "minikube",
+			"--context", "paw-local",
+			"--source", "/selected/repository",
+			"--name", "platform",
+		},
+		&bytes.Buffer{},
+		&stderr,
+		workspaceTestDependencies(nil),
+	)
+
+	if exitCode != 2 || !strings.Contains(stderr.String(), "--revision REF") {
+		t.Fatalf("expected complete-selection error, got %d and %q", exitCode, stderr.String())
+	}
+}
+
+func TestWorkspaceRepositoryOptionsDoNotConsumeAnotherFlagAsAValue(t *testing.T) {
+	for _, option := range []string{
+		"--adapter",
+		"--context",
+		"--name",
+		"--revision",
+		"--source",
+	} {
+		t.Run(option, func(t *testing.T) {
+			var stderr bytes.Buffer
+			exitCode := runWithDependencies(
+				[]string{"workspace", "repository", "add", option, "--context"},
+				&bytes.Buffer{},
+				&stderr,
+				workspaceTestDependencies(nil),
+			)
+			if exitCode != 2 || !strings.Contains(stderr.String(), option+" requires a value") {
+				t.Fatalf("expected missing value error for %s, got %d and %q", option, exitCode, stderr.String())
+			}
+		})
+	}
+}
+
 func TestWorkspaceReportsKubectlFailure(t *testing.T) {
 	deps := workspaceTestDependencies(func(string, []string, io.Writer, io.Writer) error {
 		return errors.New("command failed")
@@ -610,6 +692,9 @@ func workspaceTestDependencies(runner commandRunner) dependencies {
 				return "", func() {}, fmt.Errorf("unsupported adapter %q", adapter)
 			}
 			return "/manifests/minikube", func() {}, nil
+		},
+		addRepo: func(repository.Request, io.Writer, io.Writer) error {
+			return fmt.Errorf("unexpected repository materialization")
 		},
 	}
 }

@@ -47,7 +47,7 @@ egress_probe_port="${PAW_EGRESS_PROBE_PORT:-443}"
 [[ "$egress_probe_port" =~ ^[0-9]+$ ]] || fail "PAW_EGRESS_PROBE_PORT must be numeric"
 ((egress_probe_port >= 1 && egress_probe_port <= 65535)) || fail "PAW_EGRESS_PROBE_PORT must be between 1 and 65535"
 
-for dependency in curl jq kubectl; do
+for dependency in curl git jq kubectl; do
   command -v "$dependency" >/dev/null || fail "$dependency is required"
 done
 
@@ -212,6 +212,48 @@ for _ in {1..30}; do
   sleep 1
 done
 [[ "$connected" == true ]] || fail "loopback T3 connection did not become ready"
+
+repository_root="$(
+  git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel
+)"
+repository_ref="$(git -C "$repository_root" symbolic-ref --quiet HEAD || true)"
+if [[ -z "$repository_ref" ]]; then
+  repository_ref="$(
+    git -C "$repository_root" for-each-ref \
+      --points-at HEAD \
+      --format='%(refname)' \
+      refs/heads refs/tags refs/remotes | sed -n '1p'
+  )"
+fi
+[[ -n "$repository_ref" ]] || fail "PAW source HEAD is not reachable from an explicit named ref"
+repository_commit="$(git -C "$repository_root" rev-parse --verify "$repository_ref^{commit}")"
+"$paw_binary" workspace repository add \
+  --adapter minikube \
+  --context "$context" \
+  --source "$repository_root" \
+  --revision "$repository_ref" \
+  --name paw-conformance >/dev/null
+
+# The single-quoted script expands only inside the workspace shell.
+# shellcheck disable=SC2016
+kubectl --context "$context" --namespace "$namespace" exec workspace-0 -- \
+  sh -ceu '
+    repository=/workspace/work/paw-conformance
+    test "$(git -C "$repository" rev-parse HEAD)" = "$1"
+    ! git -C "$repository" symbolic-ref --quiet HEAD >/dev/null
+    test -z "$(git -C "$repository" remote)"
+    touch "$repository/.paw-write-test"
+    rm -f -- "$repository/.paw-write-test"
+  ' paw-repository-check "$repository_commit" >/dev/null
+
+if "$paw_binary" workspace repository add \
+  --adapter minikube \
+  --context "$context" \
+  --source "$repository_root" \
+  --revision "$repository_ref" \
+  --name paw-conformance >/dev/null 2>&1; then
+  fail "repository materialization replaced an existing destination"
+fi
 
 pairing_id="$(
   "$paw_binary" workspace pair \
