@@ -1,0 +1,233 @@
+{
+  "schemaVersion": 1,
+  "version": "v0",
+  "authorityClasses": [
+    {
+      "name": "workspace-only",
+      "rank": 0,
+      "externalMutation": false,
+      "productionAccess": false,
+      "description": "May change ephemeral workspace files but cannot mutate remote repositories, clusters, cloud resources, or other external systems."
+    },
+    {
+      "name": "read-only",
+      "rank": 1,
+      "externalMutation": false,
+      "productionAccess": false,
+      "description": "Adds explicitly selected non-production inspection and planning access while retaining the external-mutation prohibition."
+    }
+  ],
+  "profiles": [
+    {
+      "name": "core",
+      "description": "Headless T3 runtime and essential workspace tools.",
+      "authorityCeiling": "workspace-only",
+      "repositorySelection": "explicit",
+      "remoteGitPush": false,
+      "defaultDenyEgress": true,
+      "allowedCapabilities": [
+        "provider-session",
+        "selected-repository-read",
+        "workspace-filesystem-write"
+      ],
+      "egressPurposes": [
+        "approved-provider-api",
+        "selected-git-read"
+      ],
+      "forbiddenCapabilities": [
+        "ambient-host-filesystem",
+        "cluster-mutation",
+        "cloud-mutation",
+        "host-container-socket",
+        "production-access",
+        "remote-git-push",
+        "sops-decryption-identity",
+        "static-infrastructure-credential"
+      ]
+    },
+    {
+      "name": "platform-readonly",
+      "description": "Selected repositories and read-only non-production platform inspection.",
+      "authorityCeiling": "read-only",
+      "repositorySelection": "explicit",
+      "remoteGitPush": false,
+      "defaultDenyEgress": true,
+      "allowedCapabilities": [
+        "non-production-platform-read",
+        "provider-session",
+        "selected-repository-read",
+        "terraform-plan",
+        "workspace-filesystem-write"
+      ],
+      "egressPurposes": [
+        "approved-provider-api",
+        "non-production-cloud-read",
+        "non-production-kubernetes-read",
+        "selected-git-read"
+      ],
+      "forbiddenCapabilities": [
+        "ambient-host-filesystem",
+        "cluster-mutation",
+        "cloud-mutation",
+        "host-container-socket",
+        "production-access",
+        "remote-git-push",
+        "sops-decryption-identity",
+        "static-infrastructure-credential",
+        "terraform-apply"
+      ]
+    }
+  ],
+  "trustBoundaries": [
+    {
+      "name": "browser-client",
+      "role": "Authenticated but untrusted source of workspace commands and recipient of workspace output.",
+      "boundary": "May hold a revocable client session but never receives workload, repository, or platform identities."
+    },
+    {
+      "name": "client-access-adapter",
+      "role": "Terminates client transport and authenticates browser access before forwarding to T3.",
+      "boundary": "Must not convert client identity into infrastructure authority inside the workspace."
+    },
+    {
+      "name": "workspace-runtime",
+      "role": "One T3 server and its provider subprocesses operating on selected workspace state.",
+      "boundary": "T3 and provider CLIs share the workspace authority ceiling and are isolated from other workspaces and the host."
+    },
+    {
+      "name": "repository-content",
+      "role": "Selected source material and instructions treated as untrusted input to tools and agents.",
+      "boundary": "Repository content cannot select mounts, credentials, egress, RBAC, or a stronger profile."
+    },
+    {
+      "name": "kubernetes-control-plane",
+      "role": "Enforces workload identity, RBAC, pod security, storage, resources, and network policy.",
+      "boundary": "Workspace service accounts cannot alter their own enforcement resources or authority ceiling."
+    },
+    {
+      "name": "external-services",
+      "role": "Provider, Git, package, Kubernetes, and cloud APIs outside the workspace boundary.",
+      "boundary": "Access requires an explicit egress purpose and separately scoped identity where authentication is needed."
+    }
+  ],
+  "requiredAdapters": [
+    {
+      "name": "kubernetes-workspace",
+      "requirements": [
+        "standard workload, Service, ConfigMap, Secret reference, PVC, RBAC, and NetworkPolicy APIs",
+        "exactly one T3 server for each writable T3 state boundary",
+        "restricted pod security, non-root execution, dropped capabilities, and bounded resources"
+      ]
+    },
+    {
+      "name": "client-access",
+      "requirements": [
+        "authenticated and encrypted browser access",
+        "revocable client sessions and pairing material",
+        "no direct exposure of the unauthenticated T3 service"
+      ]
+    },
+    {
+      "name": "repository-source",
+      "requirements": [
+        "explicit repository and revision selection",
+        "read-only remote credentials for v0",
+        "no ambient host checkout mount"
+      ]
+    },
+    {
+      "name": "provider-authentication",
+      "requirements": [
+        "provider state attached at runtime rather than built into images",
+        "revocable authentication scoped independently from infrastructure identity",
+        "no credential values in profile metadata or agent instructions"
+      ]
+    },
+    {
+      "name": "workspace-storage",
+      "requirements": [
+        "isolated writable state for one workspace",
+        "single-writer attachment for T3 state",
+        "declared retention, expiry, deletion, and backup behavior"
+      ]
+    },
+    {
+      "name": "identity-and-egress",
+      "requirements": [
+        "default-deny egress resolved from declared purposes",
+        "short-lived workload identity where platform access is enabled",
+        "read-only non-production authority for platform-readonly"
+      ]
+    },
+    {
+      "name": "lifecycle-and-audit",
+      "requirements": [
+        "create, inspect, connect, revoke, expire, and destroy operations",
+        "audit records contain metadata and outcomes but no credential values or repository content",
+        "destruction revokes access before deleting retained state according to policy"
+      ]
+    }
+  ],
+  "invariants": [
+    {
+      "id": "single-writer",
+      "statement": "Exactly one T3 server may write a T3 state boundary.",
+      "enforcedBy": [
+        "workload replica contract",
+        "single-writer storage attachment"
+      ]
+    },
+    {
+      "id": "explicit-repositories",
+      "statement": "Only declared repositories and revisions enter a workspace.",
+      "enforcedBy": [
+        "repository-source adapter",
+        "forbidden ambient host mounts"
+      ]
+    },
+    {
+      "id": "no-ambient-credentials",
+      "statement": "Images and long-lived workspace configuration contain no decryption identities or broad static credentials.",
+      "enforcedBy": [
+        "image and manifest scans",
+        "runtime identity attachment",
+        "agent safety instructions"
+      ]
+    },
+    {
+      "id": "default-deny-egress",
+      "statement": "Network access is denied unless an adapter resolves a declared purpose to an approved destination.",
+      "enforcedBy": [
+        "NetworkPolicy",
+        "adapter capability validation"
+      ]
+    },
+    {
+      "id": "restricted-pod",
+      "statement": "Workspace processes run non-root without privilege, host namespaces, host paths, or container sockets.",
+      "enforcedBy": [
+        "pod security context",
+        "admission policy",
+        "manifest negative tests"
+      ]
+    },
+    {
+      "id": "authority-monotonicity",
+      "statement": "Repository content, browser input, provider output, and workspace processes cannot increase the selected profile authority ceiling.",
+      "enforcedBy": [
+        "operator-side profile selection",
+        "immutable workload and identity policy",
+        "workspace RBAC prohibition on self-modification"
+      ]
+    }
+  ],
+  "nonGoals": [
+    "production infrastructure access or mutation",
+    "remote repository push or pull-request publication from v0 workspaces",
+    "high availability for a single workspace T3 server",
+    "multiple mutually distrusting users inside one workspace",
+    "ambient access to host files, host credentials, or organization-wide checkouts",
+    "secret decryption or general-purpose credential brokerage inside the agent runtime",
+    "guaranteeing confidentiality of data intentionally sent to an approved AI provider"
+  ]
+}
