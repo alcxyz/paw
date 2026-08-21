@@ -231,6 +231,39 @@ The presence of OpenTofu, kubectl, or Helm does not grant mutation authority.
 The read-only identity, Kubernetes RBAC, egress policy, and supervised tool
 permissions enforce the profile's external-mutation prohibition independently.
 
+The first useful platform workspaces compose that capability closure with one
+provider. Their `linux/amd64` baselines are:
+
+`paw-platform-readonly-codex`:
+
+| Metric | Measured | Budget |
+| --- | ---: | ---: |
+| Runtime-closure NAR | 1,351,664,000 bytes | 1,457,520,640 bytes |
+| Uncompressed layers | 1,413,990,400 bytes | 1,530,920,960 bytes |
+| Registry transfer | 449,584,656 bytes | 492,830,720 bytes |
+
+`paw-platform-readonly-claude-code`:
+
+| Metric | Measured | Budget |
+| --- | ---: | ---: |
+| Runtime-closure NAR | 1,193,989,632 bytes | 1,289,748,480 bytes |
+| Uncompressed layers | 1,258,024,960 bytes | 1,363,148,800 bytes |
+| Registry transfer | 382,189,332 bytes | 419,430,400 bytes |
+
+`paw-platform-readonly-opencode`:
+
+| Metric | Measured | Budget |
+| --- | ---: | ---: |
+| Runtime-closure NAR | 1,049,715,760 bytes | 1,137,704,960 bytes |
+| Uncompressed layers | 1,112,033,280 bytes | 1,205,862,400 bytes |
+| Registry transfer | 342,132,103 bytes | 377,487,360 bytes |
+
+All three composed images contain 80 layers. Their Docker archives are
+430,207,196 bytes for Codex, 365,809,308 bytes for Claude Code, and 326,650,924
+bytes for OpenCode. Shared closure paths produce identical immutable layers for
+registry and node reuse, while each complete image remains independently
+measured and budgeted.
+
 Native `arm64` measurements must still be recorded before publication of the
 common image index.
 
