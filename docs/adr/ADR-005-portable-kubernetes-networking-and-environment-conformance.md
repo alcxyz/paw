@@ -5,10 +5,11 @@
 
 ## Context
 
-ADR-001 makes Kubernetes the sole PAW deployment contract and requires the
-portable core to avoid dependencies on a particular cluster or cloud. ADR-003
-uses standard Kubernetes `NetworkPolicy` for default deny and requires an
-environment adapter to prove bounded egress.
+ADR-001 makes Kubernetes the initial PAW deployment contract for M1, while
+ADR-006 leaves a deliberate extension point for later runtime backends. The
+Kubernetes core must avoid dependencies on a particular cluster or cloud.
+ADR-003 uses standard Kubernetes `NetworkPolicy` for default deny and requires
+an environment adapter to prove bounded egress.
 
 The first live conformance run used Minikube with Calico because Minikube's
 default network did not enforce the policy. That proved the security control,
