@@ -5,6 +5,12 @@ adapters compose that base and supply a namespace, an immutable released image,
 client access, concrete egress destinations, storage behavior, and any workload
 identity required by the selected profile.
 
+The base depends on standard Kubernetes APIs and verified behavior, not Calico,
+Cilium, Flannel, Azure CNI, or another named implementation. An adapter may use
+environment-native networking features, but it must preserve the portable
+default deny and pass live positive and negative controls. See
+[ADR-005](../docs/adr/ADR-005-portable-kubernetes-networking-and-environment-conformance.md).
+
 The base deliberately uses an invalid registry and zero digest. This prevents a
 bare base from silently pulling an unreviewed `latest` image. Released adapters
 replace it with an immutable image digest. The Minikube adapter uses the local
@@ -72,4 +78,6 @@ runtime UID, absent token and socket mounts, empty effective RBAC, enforced
 egress denial, streamed repository selection, clean logs, and
 namespace/PVC-object deletion. It does not yet claim backing-volume
 reclamation. The target cluster must use a CNI that enforces NetworkPolicy and
-must already contain the selected development image.
+must already contain the selected development image. The current script uses
+Minikube as a reference environment; it does not make Minikube or its selected
+network-policy implementation part of the portable deployment contract.

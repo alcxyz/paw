@@ -129,7 +129,9 @@ Kubernetes `NetworkPolicy` supplies the portable default deny. Because standard
 policy does not describe every DNS or identity-aware egress mechanism, the
 environment adapter must prove that it can enforce each resolved destination or
 reject the profile. An adapter cannot silently replace bounded egress with
-unrestricted internet access.
+unrestricted internet access. ADR-005 defines behavioral environment
+verification and keeps individual networking implementations outside the
+portable contract.
 
 ### 5. Enforce v0 invariants at independent boundaries
 

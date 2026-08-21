@@ -115,6 +115,7 @@
       "name": "kubernetes-workspace",
       "requirements": [
         "standard workload, Service, ConfigMap, Secret reference, PVC, RBAC, and NetworkPolicy APIs",
+        "behaviorally verified ingress and egress NetworkPolicy enforcement rather than CNI-name detection",
         "exactly one T3 server for each writable T3 state boundary",
         "restricted pod security, non-root execution, dropped capabilities, and bounded resources"
       ]
@@ -155,6 +156,7 @@
       "name": "identity-and-egress",
       "requirements": [
         "default-deny egress resolved from declared purposes",
+        "live positive and negative controls for every bounded egress implementation",
         "short-lived workload identity where platform access is enabled",
         "read-only non-production authority for platform-readonly"
       ]
@@ -199,7 +201,8 @@
       "statement": "Network access is denied unless an adapter resolves a declared purpose to an approved destination.",
       "enforcedBy": [
         "NetworkPolicy",
-        "adapter capability validation"
+        "adapter capability validation",
+        "live environment conformance"
       ]
     },
     {
