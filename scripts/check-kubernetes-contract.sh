@@ -6,6 +6,54 @@ paw_binary=${2:-}
 check_dir=$(mktemp -d "${TMPDIR:-/tmp}/paw-kubernetes-contract.XXXXXX")
 trap 'rm -rf -- "$check_dir"' EXIT
 
+assert_security_contract() {
+  jq --exit-status '
+    [.. | objects |
+      select(has("containers") or has("initContainers") or
+        has("ephemeralContainers")) |
+      (.containers[]?, .initContainers[]?, .ephemeralContainers[]?)] as $containers |
+    ($containers | length) > 0 and
+    all($containers[];
+      .securityContext.allowPrivilegeEscalation == false and
+      .securityContext.privileged == false and
+      .securityContext.readOnlyRootFilesystem == true and
+      (.securityContext.capabilities.drop | index("ALL")) != null and
+      ((.securityContext.capabilities.add // []) | length) == 0) and
+    ([.. | objects | select(has("hostPath"))] | length) == 0 and
+    ([.. | objects | select(has("secretKeyRef") or has("secretRef") or
+      has("serviceAccountToken"))] | length) == 0 and
+    ([.. | objects | select(has("volumes")) | .volumes[]? |
+      select(has("secret"))] | length) == 0 and
+    ([.. | objects | select(has("projected")) | .projected.sources[]? |
+      select(has("secret"))] | length) == 0 and
+    ([.. | objects | select(has("envFrom"))] | length) == 0 and
+    ([.. | objects | select(
+      .hostNetwork == true or .hostPID == true or .hostIPC == true or
+      .shareProcessNamespace == true)] | length) == 0 and
+    ([.. | objects | select(has("hostPort") or has("hostIP"))] | length) == 0 and
+    ([.. | objects | select(has("volumeDevices"))] | length) == 0 and
+    ([.. | objects | select(has("sysctls"))] | length) == 0 and
+    ([.. | objects | select(has("hostAliases"))] | length) == 0 and
+    ([.. | objects | select(has("env")) | .env[]? |
+      select(.name | test(
+        "(TOKEN|SECRET|PASSWORD|CREDENTIAL|ACCESS_KEY|PRIVATE_KEY|API_?KEY|BEARER|PASSPHRASE)";
+        "i"))] | length) == 0 and
+    ([.. | strings | select(test(
+      "(docker\\.sock|containerd\\.sock|podman\\.sock|/var/run/docker|/run/containerd)";
+      "i"))] | length) == 0
+  ' "$1" >/dev/null
+}
+
+expect_security_rejection() {
+  local description=$1
+  local manifest=$2
+
+  if assert_security_contract "$manifest"; then
+    echo "security contract accepted $description" >&2
+    exit 1
+  fi
+}
+
 kubectl kustomize "$repo_root/deploy/base" >"$check_dir/base.yaml"
 kubectl kustomize "$repo_root/deploy/adapters/minikube" >"$check_dir/minikube.yaml"
 
@@ -64,26 +112,10 @@ jq --exit-status '
   ([.[] | select(.kind == "Secret")] | length) == 0 and
   ([.[] | select(.kind == "ConfigMap")][0] |
     .data.profile == "core" and .data.provider == "none") and
-  ([.. | objects | select(has("hostPath"))] | length) == 0 and
-  ([.. | objects | select(has("secretKeyRef") or has("secretRef"))] | length) == 0 and
-  ([.. | objects | select(has("serviceAccountToken"))] | length) == 0 and
-  ([.. | objects | select(has("envFrom"))] | length) == 0 and
-  ([.. | objects | select(
-    .hostNetwork == true or .hostPID == true or .hostIPC == true or
-    .shareProcessNamespace == true)] | length) == 0 and
-  ([.. | objects | select(has("hostPort") or has("hostIP"))] | length) == 0 and
-  ([.. | objects | select(has("volumeDevices"))] | length) == 0 and
-  ([.. | objects | select(has("sysctls"))] | length) == 0 and
-  ([.. | objects | select(has("hostAliases"))] | length) == 0 and
-  ([.. | objects | select(has("capabilities")) |
-    .capabilities.add[]?] | length) == 0 and
-  ([.. | objects | select(has("env")) | .env[]? |
-    select(.name | test("(TOKEN|SECRET|PASSWORD|CREDENTIAL|ACCESS_KEY|PRIVATE_KEY)"; "i"))] |
-    length) == 0 and
-  ([.. | strings |
-    select(test("(docker\\.sock|containerd\\.sock|podman\\.sock|/var/run/docker|/run/containerd)"; "i"))] |
-    length) == 0
+  ([.. | objects | select(has("hostPath"))] | length) == 0
 ' "$check_dir/base.json" >/dev/null
+
+assert_security_contract "$check_dir/base.json"
 
 jq --exit-status '
   ([.[] | select(.kind == "Namespace")][0] |
@@ -93,6 +125,42 @@ jq --exit-status '
   ([.[] | select(.kind == "StatefulSet")][0] |
     .spec.template.spec.containers[0].image) == "paw-core:dev"
 ' "$check_dir/minikube.json" >/dev/null
+
+assert_security_contract "$check_dir/minikube.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.volumes +=
+  [{"name":"forbidden-secret","secret":{"secretName":"forbidden"}}]
+  else . end)' \
+  "$check_dir/base.json" >"$check_dir/secret-volume.json"
+expect_security_rejection "a secret volume" "$check_dir/secret-volume.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.volumes +=
+  [{"name":"forbidden-projected","projected":{"sources":[
+    {"secret":{"name":"forbidden"}}
+  ]}}] else . end)' "$check_dir/base.json" >"$check_dir/projected-secret.json"
+expect_security_rejection "a projected secret" "$check_dir/projected-secret.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.containers[0].env +=
+  [{"name":"API_KEY","value":"forbidden"}]
+  else . end)' \
+  "$check_dir/base.json" >"$check_dir/api-key.json"
+expect_security_rejection "an API_KEY environment variable" "$check_dir/api-key.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.initContainers = [{
+    "name":"unsafe-init",
+    "image":"example.invalid/unsafe:latest",
+    "securityContext":{
+      "allowPrivilegeEscalation":false,
+      "privileged":true,
+      "readOnlyRootFilesystem":true,
+      "capabilities":{"drop":["ALL"]}
+    }
+  }] else . end)' "$check_dir/base.json" >"$check_dir/unsafe-init.json"
+expect_security_rejection "a privileged init container" "$check_dir/unsafe-init.json"
 
 if [[ -n "$paw_binary" ]]; then
   while read -r profile provider image; do
@@ -121,6 +189,7 @@ if [[ -n "$paw_binary" ]]; then
         ([.. | objects | select(has("hostPath") or has("secretKeyRef") or
           has("secretRef") or has("serviceAccountToken"))] | length) == 0
       ' "$check_dir/$name.json" >/dev/null
+    assert_security_contract "$check_dir/$name.json"
   done <<'EOF'
 core none paw-core
 core codex paw-codex
