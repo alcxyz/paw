@@ -215,6 +215,20 @@ executables are removed so that Codex, Claude Code, and OpenCode can be supplied
 as independent image layers. The runtime contract check enforces a 450 MiB NAR
 closure ceiling for the initial `x86_64-linux` baseline.
 
+Build the provider-free core workspace image or inspect its complete size
+report:
+
+```sh
+nix build .#paw-core-image
+nix build .#paw-core-image-report
+jq . result/report.json
+```
+
+The report records the unique runtime closure, uncompressed layers, compressed
+registry transfer, largest closure members and layers, image configuration, and
+manifest digest. The image runs as UID/GID 65532 and contains no Nix CLI,
+daemon, Electron runtime, or provider executable.
+
 ## Sensitive material
 
 This repository is private, but credentials, decrypted configuration, internal

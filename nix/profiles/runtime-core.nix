@@ -6,7 +6,11 @@
     cacert
     coreutils
     findutils
-    gitMinimal
+    (gitMinimal.override {
+      curl = curlMinimal;
+      nlsSupport = false;
+      doInstallCheck = false;
+    })
     gnugrep
     gnused
     openssh
