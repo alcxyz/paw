@@ -64,6 +64,8 @@ The initial foundation provides:
 paw version
 paw doctor
 paw profile list
+paw profile show platform-readonly
+paw profile show platform-readonly --json
 paw workspace render --adapter minikube
 paw workspace create --adapter minikube --context minikube
 paw workspace destroy --adapter minikube --context minikube --delete-state
@@ -245,6 +247,21 @@ T3 runtime contract. No provider credential or authentication state is present
 in the build. OpenCode supplies T3's GitHub Copilot path; users authenticate the
 Copilot subscription at runtime through OpenCode's
 [documented device flow](https://opencode.ai/docs/providers/#github-copilot).
+
+Build the provider-free platform capability image and inspect its budget report:
+
+```sh
+nix build .#paw-platform-readonly-image
+nix build .#paw-platform-readonly-image-report
+jq . result/report.json
+```
+
+This image adds OpenTofu, kubectl, Helm, Kustomize, jq, and yq for planning and
+inspection. It deliberately omits cloud-specific CLIs; concrete cloud tooling
+and short-lived identity belong to separately measured environment capability
+layers. Installing an executable does not grant mutation authority: the
+`read-only` ceiling, scoped identity, RBAC, egress policy, and supervised
+permissions remain independent enforcement boundaries.
 
 ## Sensitive material
 

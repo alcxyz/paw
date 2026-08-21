@@ -42,6 +42,71 @@ func TestProfileList(t *testing.T) {
 	}
 }
 
+func TestProfileShowExposesEffectiveAuthority(t *testing.T) {
+	var stdout bytes.Buffer
+
+	exitCode := run(
+		[]string{"profile", "show", "platform-readonly"},
+		&stdout,
+		&bytes.Buffer{},
+		alwaysAvailable,
+	)
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	for _, expected := range []string{
+		"read-only",
+		"EXTERNAL MUTATION",
+		"denied",
+		"PLATFORM IDENTITY",
+		"required",
+		"terraform-apply",
+	} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("profile output does not contain %q: %q", expected, stdout.String())
+		}
+	}
+}
+
+func TestProfileShowJSON(t *testing.T) {
+	var stdout bytes.Buffer
+
+	exitCode := run(
+		[]string{"profile", "show", "core", "--json"},
+		&stdout,
+		&bytes.Buffer{},
+		alwaysAvailable,
+	)
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	for _, expected := range []string{
+		`"authorityCeiling": "workspace-only"`,
+		`"externalMutation": false`,
+		`"remoteGitPush": false`,
+	} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("JSON output does not contain %q: %q", expected, stdout.String())
+		}
+	}
+}
+
+func TestProfileShowRejectsUnknownProfile(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := run(
+		[]string{"profile", "show", "nope"},
+		&bytes.Buffer{},
+		&stderr,
+		alwaysAvailable,
+	)
+
+	if exitCode != 2 || !strings.Contains(stderr.String(), "unknown profile") {
+		t.Fatalf("unexpected result: exit=%d stderr=%q", exitCode, stderr.String())
+	}
+}
+
 func TestDoctorFailsWhenRequiredDependencyIsMissing(t *testing.T) {
 	var stdout bytes.Buffer
 	lookup := func(name string) (string, error) {

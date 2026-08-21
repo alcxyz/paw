@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -61,7 +62,13 @@ func runWithDependencies(args []string, stdout, stderr io.Writer, deps dependenc
 			printProfiles(stdout)
 			return 0
 		}
-		return usageError(stderr, "usage: paw profile list")
+		if len(args) == 3 && args[1] == "show" {
+			return printProfile(args[2], false, stdout, stderr)
+		}
+		if len(args) == 4 && args[1] == "show" && args[3] == "--json" {
+			return printProfile(args[2], true, stdout, stderr)
+		}
+		return usageError(stderr, "usage: paw profile list | paw profile show NAME [--json]")
 	case "workspace":
 		return runWorkspace(args[1:], stdout, stderr, deps)
 	default:
@@ -77,7 +84,7 @@ Usage:
 
 Commands:
   doctor        Inspect local PAW dependencies
-  profile list  List built-in workspace profiles
+  profile       List or inspect built-in workspace profiles
   workspace     Render, create, or destroy a workspace
   version       Print build version information
   help          Show this help`)
@@ -199,6 +206,61 @@ func printProfiles(output io.Writer) {
 		fmt.Fprintf(writer, "%s\t%s\t%s\n", item.Name, item.Authority, item.Description)
 	}
 	_ = writer.Flush()
+}
+
+func printProfile(name string, asJSON bool, stdout, stderr io.Writer) int {
+	definition, exists := profile.Lookup(name)
+	if !exists {
+		fmt.Fprintf(stderr, "paw: unknown profile %q\n", name)
+		return 2
+	}
+
+	if asJSON {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(definition); err != nil {
+			fmt.Fprintf(stderr, "paw: encode profile: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	writer := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "NAME\t%s\n", definition.Name)
+	fmt.Fprintf(writer, "AUTHORITY CEILING\t%s\n", definition.Authority)
+	fmt.Fprintf(writer, "EXTERNAL MUTATION\t%s\n", allowed(definition.ExternalMutation))
+	fmt.Fprintf(writer, "PRODUCTION ACCESS\t%s\n", allowed(definition.ProductionAccess))
+	fmt.Fprintf(writer, "PLATFORM IDENTITY\t%s\n", required(definition.PlatformIdentity))
+	fmt.Fprintf(writer, "REPOSITORY SELECTION\t%s\n", definition.RepositorySelection)
+	fmt.Fprintf(writer, "REMOTE GIT PUSH\t%s\n", allowed(definition.RemoteGitPush))
+	fmt.Fprintf(writer, "DEFAULT-DENY EGRESS\t%s\n", enabled(definition.DefaultDenyEgress))
+	fmt.Fprintf(writer, "ALLOWED CAPABILITIES\t%s\n", definition.AllowedCapabilities)
+	fmt.Fprintf(writer, "EGRESS PURPOSES\t%s\n", definition.EgressPurposes)
+	fmt.Fprintf(writer, "FORBIDDEN CAPABILITIES\t%s\n", definition.ForbiddenCapabilities)
+	fmt.Fprintf(writer, "REQUIRED ADAPTERS\t%s\n", definition.RequiredAdapters)
+	_ = writer.Flush()
+	return 0
+}
+
+func allowed(value bool) string {
+	if value {
+		return "allowed"
+	}
+	return "denied"
+}
+
+func required(value bool) string {
+	if value {
+		return "required"
+	}
+	return "not required"
+}
+
+func enabled(value bool) string {
+	if value {
+		return "enabled"
+	}
+	return "disabled"
 }
 
 func runDoctor(output io.Writer, lookPath pathLookup) int {

@@ -210,6 +210,27 @@ Nix package name rather than enabling unfree packages globally. This packaging
 exception does not accept provider terms on a user's behalf and does not place
 authentication material in a derivation or image.
 
+The first provider-free `paw-platform-readonly` image adds OpenTofu 1.12.5,
+kubectl 1.36.3, Helm 4.2.4, Kustomize 5.8.1, jq 1.8.2, and yq 4.53.3. Its
+`linux/amd64` baseline is:
+
+| Metric | Measured | Budget |
+| --- | ---: | ---: |
+| Runtime-closure NAR | 850,103,768 bytes | 917,504,000 bytes |
+| Uncompressed layers | 912,394,240 bytes | 985,661,440 bytes |
+| Registry transfer | 272,446,901 bytes | 298,844,160 bytes |
+| Layers | 80 | 80 |
+
+Its compressed Docker archive is 260,191,330 bytes. The generic profile omits
+Azure, AWS, and Google Cloud CLIs. Direct cloud CLIs belong to separately
+measured environment capability layers so the base profile does not silently
+select one cloud. OpenTofu providers are selected by an explicit repository and
+must come from a lock-file-verified cache or adapter-approved bounded egress.
+
+The presence of OpenTofu, kubectl, or Helm does not grant mutation authority.
+The read-only identity, Kubernetes RBAC, egress policy, and supervised tool
+permissions enforce the profile's external-mutation prohibition independently.
+
 Native `arm64` measurements must still be recorded before publication of the
 common image index.
 
