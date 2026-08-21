@@ -15,7 +15,7 @@ import (
 
 type pathLookup func(string) (string, error)
 type commandRunner func(string, []string, io.Writer, io.Writer) error
-type manifestMaterializer func(string) (string, func(), error)
+type manifestMaterializer func(string, deployment.Selection) (string, func(), error)
 
 type dependencies struct {
 	lookPath    pathLookup
@@ -32,7 +32,7 @@ func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
 	return runWithDependencies(args, stdout, stderr, dependencies{
 		lookPath:    lookPath,
 		runCommand:  executeCommand,
-		materialize: deployment.Materialize,
+		materialize: deployment.MaterializeSelection,
 	})
 }
 
@@ -94,6 +94,8 @@ type workspaceOptions struct {
 	adapter     string
 	context     string
 	deleteState bool
+	profile     string
+	provider    string
 }
 
 func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) int {
@@ -109,7 +111,7 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 		return usageError(stderr, "workspace requires --adapter minikube")
 	}
 	if operation == "render" && (options.context != "" || options.deleteState) {
-		return usageError(stderr, "workspace render only accepts --adapter")
+		return usageError(stderr, "workspace render does not accept --context or --delete-state")
 	}
 	if operation != "render" && options.context == "" {
 		return usageError(stderr, "workspace create and destroy require --context")
@@ -120,8 +122,27 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	if operation == "destroy" && !options.deleteState {
 		return usageError(stderr, "workspace destroy requires --delete-state for the v0 ephemeral workspace")
 	}
+	if operation == "destroy" && (options.profile != "" || options.provider != "") {
+		return usageError(stderr, "workspace destroy does not accept --profile or --provider")
+	}
+	if operation != "destroy" && options.profile == "" {
+		return usageError(stderr, "workspace render and create require --profile")
+	}
+	if operation != "destroy" && options.provider == "" {
+		return usageError(stderr, "workspace render and create require --provider")
+	}
 
-	manifestPath, cleanup, err := deps.materialize(options.adapter)
+	selection := deployment.Selection{Profile: "core", Provider: "none"}
+	if operation != "destroy" {
+		selection = deployment.Selection{
+			Profile:  options.profile,
+			Provider: options.provider,
+		}
+	}
+	if _, err := deployment.DevelopmentImage(selection); err != nil {
+		return usageError(stderr, err.Error())
+	}
+	manifestPath, cleanup, err := deps.materialize(options.adapter, selection)
 	if err != nil {
 		fmt.Fprintf(stderr, "paw: %v\n", err)
 		return 1
@@ -173,6 +194,24 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 				return workspaceOptions{}, fmt.Errorf("--delete-state may only be specified once")
 			}
 			result.deleteState = true
+		case "--profile":
+			index++
+			if index == len(args) || args[index] == "" {
+				return workspaceOptions{}, fmt.Errorf("--profile requires a value")
+			}
+			if result.profile != "" {
+				return workspaceOptions{}, fmt.Errorf("--profile may only be specified once")
+			}
+			result.profile = args[index]
+		case "--provider":
+			index++
+			if index == len(args) || args[index] == "" {
+				return workspaceOptions{}, fmt.Errorf("--provider requires a value")
+			}
+			if result.provider != "" {
+				return workspaceOptions{}, fmt.Errorf("--provider may only be specified once")
+			}
+			result.provider = args[index]
 		default:
 			return workspaceOptions{}, fmt.Errorf("unknown workspace option %q", args[index])
 		}
@@ -182,8 +221,8 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 
 func workspaceUsage() string {
 	return `usage:
-  paw workspace render --adapter minikube
-  paw workspace create --adapter minikube --context CONTEXT
+  paw workspace render --adapter minikube --profile PROFILE --provider PROVIDER
+  paw workspace create --adapter minikube --context CONTEXT --profile PROFILE --provider PROVIDER
   paw workspace destroy --adapter minikube --context CONTEXT --delete-state`
 }
 

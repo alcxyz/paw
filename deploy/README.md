@@ -17,6 +17,21 @@ kubectl kustomize deploy/base
 kubectl kustomize deploy/adapters/minikube
 ```
 
+The PAW CLI binds one reviewed local image composition rather than accepting an
+arbitrary image name:
+
+```sh
+paw workspace render --adapter minikube \
+  --profile platform-readonly --provider opencode
+paw workspace create --adapter minikube --context minikube \
+  --profile platform-readonly --provider opencode
+```
+
+Valid v0 profiles are `core` and `platform-readonly`; valid providers are
+`none`, `codex`, `claude-code`, and `opencode`. The rendered image and the
+StatefulSet and ConfigMap metadata are derived from that exact pair. Released
+remote adapters replace the local development tag with an immutable digest.
+
 The initial base remains unreachable because its network policy denies all
 traffic. Client-access and egress adapters must add narrowly scoped policy for
 their environment. They must never replace the default deny with unrestricted

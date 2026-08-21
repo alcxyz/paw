@@ -379,7 +379,9 @@
                 ];
               }
               ''
-                bash ${./scripts/check-kubernetes-contract.sh} ${./.}
+                bash ${./scripts/check-kubernetes-contract.sh} \
+                  ${./.} \
+                  ${self.packages.${system}.paw}/bin/paw
                 touch "$out"
               '';
         }
