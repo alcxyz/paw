@@ -141,6 +141,21 @@ Subsequent builds fail when they exceed those budgets beyond an explicitly
 documented tolerance. Raising a budget requires an intentional review explaining
 the new runtime dependency or capability.
 
+The first `t3code-headless` implementation for `x86_64-linux`, measured on
+2026-08-21, establishes these core-package values:
+
+- T3 version: `0.0.33`;
+- package NAR size: 203,458,784 bytes (194.0 MiB);
+- unique runtime-closure NAR size: 443,127,904 bytes (422.6 MiB); and
+- enforced runtime-closure budget: 471,859,200 bytes (450 MiB).
+
+The package contains the server, browser client, JavaScript adapter libraries,
+native host `node-pty` build, and resource monitor. It excludes Electron,
+desktop resources, provider executables, the Claude Agent SDK's optional bundled
+Claude executable, foreign `node-pty` prebuilds, and build-time Node, pnpm, and
+Python closures. Provider-image and OCI-size budgets remain to be established
+when those images are implemented.
+
 ### 6. Package providers without packaging credentials
 
 The initial provider variants support the native T3 adapters for Codex and
