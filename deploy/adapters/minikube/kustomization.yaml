@@ -1,9 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: paw-workspace
 resources:
-  - namespace.yaml
-  - ../../base
+  - ../kubernetes
 images:
   - name: registry.invalid/paw/workspace
     newName: paw-core

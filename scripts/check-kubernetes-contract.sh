@@ -56,9 +56,11 @@ expect_security_rejection() {
 }
 
 kubectl kustomize "$repo_root/deploy/base" >"$check_dir/base.yaml"
+kubectl kustomize "$repo_root/deploy/adapters/kubernetes" >"$check_dir/kubernetes.yaml"
 kubectl kustomize "$repo_root/deploy/adapters/minikube" >"$check_dir/minikube.yaml"
 
 yq eval-all -o=json '[.]' "$check_dir/base.yaml" >"$check_dir/base.json"
+yq eval-all -o=json '[.]' "$check_dir/kubernetes.yaml" >"$check_dir/kubernetes.json"
 yq eval-all -o=json '[.]' "$check_dir/minikube.yaml" >"$check_dir/minikube.json"
 
 jq --exit-status '
@@ -117,6 +119,19 @@ jq --exit-status '
 ' "$check_dir/base.json" >/dev/null
 
 assert_security_contract "$check_dir/base.json"
+
+jq --exit-status '
+  ([.[] | select(.kind == "Namespace")][0] |
+    .metadata.labels["pod-security.kubernetes.io/enforce"]) == "restricted" and
+  ([.[] | select(.kind == "StatefulSet")] | length) == 1 and
+  ([.[] | select(.kind == "StatefulSet")][0] | .spec.replicas) == 1 and
+  ([.[] | select(.kind == "StatefulSet")][0] |
+    .spec.template.spec.containers[0].image) ==
+    "registry.invalid/paw/workspace@sha256:0000000000000000000000000000000000000000000000000000000000000000" and
+  ([.. | strings | select(test("minikube|:dev$"; "i"))] | length) == 0
+' "$check_dir/kubernetes.json" >/dev/null
+
+assert_security_contract "$check_dir/kubernetes.json"
 
 jq --exit-status '
   ([.[] | select(.kind == "Namespace")][0] |
@@ -201,6 +216,30 @@ if [[ -n "$paw_binary" ]]; then
           has("secretRef") or has("serviceAccountToken"))] | length) == 0
       ' "$check_dir/$name.json" >/dev/null
     assert_security_contract "$check_dir/$name.json"
+
+    released_image="registry.example/paw/$image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    "$paw_binary" workspace render \
+      --adapter kubernetes \
+      --profile "$profile" \
+      --provider "$provider" \
+      --image-ref "$released_image" >"$check_dir/$name-kubernetes.yaml"
+    yq eval-all -o=json '[.]' \
+      "$check_dir/$name-kubernetes.yaml" >"$check_dir/$name-kubernetes.json"
+    jq --exit-status \
+      --arg profile "$profile" \
+      --arg provider "$provider" \
+      --arg image "$released_image" '
+        ([.[] | select(.kind == "StatefulSet")][0] |
+          .metadata.annotations["paw.alc.xyz/profile"] == $profile and
+          .metadata.annotations["paw.alc.xyz/provider"] == $provider and
+          .spec.template.metadata.annotations["paw.alc.xyz/profile"] == $profile and
+          .spec.template.metadata.annotations["paw.alc.xyz/provider"] == $provider and
+          .spec.template.spec.containers[0].image == $image) and
+        ([.[] | select(.kind == "ConfigMap")][0] |
+          .data.profile == $profile and .data.provider == $provider) and
+        ([.. | strings | select(test("minikube|:dev$"; "i"))] | length) == 0
+      ' "$check_dir/$name-kubernetes.json" >/dev/null
+    assert_security_contract "$check_dir/$name-kubernetes.json"
   done <<'EOF'
 core none paw-core
 core codex paw-codex

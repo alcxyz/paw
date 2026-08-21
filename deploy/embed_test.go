@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+const testDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 func TestMaterializeMinikube(t *testing.T) {
 	path, cleanup, err := Materialize("minikube")
 	if err != nil {
@@ -29,7 +31,18 @@ func TestMaterializeRejectsUnknownAdapter(t *testing.T) {
 	}
 }
 
-func TestDevelopmentImageMatrix(t *testing.T) {
+func TestSupportedAdapters(t *testing.T) {
+	for _, adapter := range []string{AdapterKubernetes, AdapterMinikube} {
+		if !SupportsAdapter(adapter) {
+			t.Fatalf("expected adapter %q to be supported", adapter)
+		}
+	}
+	if SupportsAdapter("calico") {
+		t.Fatal("networking implementation must not be a lifecycle adapter")
+	}
+}
+
+func TestImageNameMatrix(t *testing.T) {
 	tests := map[Selection]string{
 		{Profile: "core", Provider: "none"}:                     "paw-core",
 		{Profile: "core", Provider: "codex"}:                    "paw-codex",
@@ -42,15 +55,15 @@ func TestDevelopmentImageMatrix(t *testing.T) {
 	}
 
 	for selection, expected := range tests {
-		actual, err := DevelopmentImage(selection)
+		actual, err := ImageName(selection)
 		if err != nil {
-			t.Fatalf("DevelopmentImage(%#v) returned an error: %v", selection, err)
+			t.Fatalf("ImageName(%#v) returned an error: %v", selection, err)
 		}
 		if actual != expected {
-			t.Fatalf("DevelopmentImage(%#v) = %q, want %q", selection, actual, expected)
+			t.Fatalf("ImageName(%#v) = %q, want %q", selection, actual, expected)
 		}
 	}
-	if _, err := DevelopmentImage(Selection{Profile: "production", Provider: "codex"}); err == nil {
+	if _, err := ImageName(Selection{Profile: "production", Provider: "codex"}); err == nil {
 		t.Fatal("expected unknown selection to fail")
 	}
 }
@@ -79,5 +92,79 @@ func TestMaterializeSelectionBindsImageAndMetadata(t *testing.T) {
 		if !strings.Contains(string(content), expected) {
 			t.Fatalf("kustomization does not contain %q:\n%s", expected, content)
 		}
+	}
+}
+
+func TestMaterializeGenericKubernetesBindsImmutableReleasedImage(t *testing.T) {
+	reference := "registry.example/paw/paw-platform-readonly-opencode@" + testDigest
+	path, cleanup, err := MaterializeManifest(ManifestRequest{
+		Adapter: AdapterKubernetes,
+		Selection: Selection{
+			Profile:  "platform-readonly",
+			Provider: "opencode",
+		},
+		ImageReference: reference,
+	})
+	if err != nil {
+		t.Fatalf("MaterializeManifest returned an error: %v", err)
+	}
+	defer cleanup()
+
+	content, err := os.ReadFile(filepath.Join(path, "kustomization.yaml"))
+	if err != nil {
+		t.Fatalf("read kustomization: %v", err)
+	}
+	for _, expected := range []string{
+		"newName: registry.example/paw/paw-platform-readonly-opencode",
+		"digest: " + testDigest,
+		"value: platform-readonly",
+		"value: opencode",
+	} {
+		if !strings.Contains(string(content), expected) {
+			t.Fatalf("generic kustomization does not contain %q:\n%s", expected, content)
+		}
+	}
+	for _, forbidden := range []string{"minikube", "newTag: dev", ":dev"} {
+		if strings.Contains(string(content), forbidden) {
+			t.Fatalf("generic kustomization contains Minikube assumption %q:\n%s", forbidden, content)
+		}
+	}
+}
+
+func TestValidateReleasedImageReference(t *testing.T) {
+	selection := Selection{Profile: "core", Provider: "codex"}
+	valid := "registry.example/team/paw-codex@" + testDigest
+	repository, digest, err := ValidateReleasedImageReference(selection, valid)
+	if err != nil {
+		t.Fatalf("valid image was rejected: %v", err)
+	}
+	if repository != "registry.example/team/paw-codex" || digest != testDigest {
+		t.Fatalf("unexpected parsed image: repository=%q digest=%q", repository, digest)
+	}
+
+	for _, reference := range []string{
+		"paw-codex@" + testDigest,
+		"registry.example/team/paw-codex:latest",
+		"registry.example/team/paw-codex:latest@" + testDigest,
+		"registry.example/team/paw-core@" + testDigest,
+		"https://registry.example/team/paw-codex@" + testDigest,
+		"registry.example/team/paw-codex#fragment@" + testDigest,
+		"registry.example/team/paw-codex@sha256:ABCDEF",
+	} {
+		if _, _, err := ValidateReleasedImageReference(selection, reference); err == nil {
+			t.Fatalf("expected invalid image %q to be rejected", reference)
+		}
+	}
+}
+
+func TestMinikubeRejectsReleasedImageReference(t *testing.T) {
+	_, cleanup, err := MaterializeManifest(ManifestRequest{
+		Adapter:        AdapterMinikube,
+		Selection:      Selection{Profile: "core", Provider: "none"},
+		ImageReference: "registry.example/paw/paw-core@" + testDigest,
+	})
+	defer cleanup()
+	if err == nil || !strings.Contains(err.Error(), "does not accept") {
+		t.Fatalf("expected Minikube released-image rejection, got %v", err)
 	}
 }

@@ -22,7 +22,7 @@ import (
 
 type pathLookup func(string) (string, error)
 type commandRunner func(string, []string, io.Writer, io.Writer) error
-type manifestMaterializer func(string, deployment.Selection) (string, func(), error)
+type manifestMaterializer func(deployment.ManifestRequest) (string, func(), error)
 type repositoryAdder func(repository.Request, io.Writer, io.Writer) error
 
 type dependencies struct {
@@ -41,7 +41,7 @@ func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
 	return runWithDependencies(args, stdout, stderr, dependencies{
 		lookPath:    lookPath,
 		runCommand:  executeCommand,
-		materialize: deployment.MaterializeSelection,
+		materialize: deployment.MaterializeManifest,
 		addRepo:     repository.Add,
 	})
 }
@@ -104,6 +104,7 @@ type workspaceOptions struct {
 	adapter     string
 	context     string
 	deleteState bool
+	imageRef    string
 	jsonOutput  bool
 	label       string
 	localPort   int
@@ -129,9 +130,9 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 		return usageError(stderr, err.Error())
 	}
 	if options.adapter == "" {
-		return usageError(stderr, "workspace requires --adapter minikube")
+		return usageError(stderr, "workspace requires --adapter kubernetes or minikube")
 	}
-	if options.adapter != "minikube" {
+	if !deployment.SupportsAdapter(options.adapter) {
 		return usageError(stderr, fmt.Sprintf("unsupported adapter %q", options.adapter))
 	}
 	if operation != "render" && options.context == "" {
@@ -171,6 +172,9 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	if !slices.Contains([]string{"inspect", "pair"}, operation) && options.jsonOutput {
 		return usageError(stderr, "--json is only valid for workspace inspect and pair")
 	}
+	if !slices.Contains([]string{"render", "create"}, operation) && options.imageRef != "" {
+		return usageError(stderr, "--image-ref is only valid for workspace render and create")
+	}
 
 	switch operation {
 	case "inspect":
@@ -190,10 +194,26 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 			Provider: options.provider,
 		}
 	}
-	if _, err := deployment.DevelopmentImage(selection); err != nil {
+	if _, err := deployment.ImageName(selection); err != nil {
 		return usageError(stderr, err.Error())
 	}
-	manifestPath, cleanup, err := deps.materialize(options.adapter, selection)
+	if options.adapter == deployment.AdapterKubernetes &&
+		slices.Contains([]string{"render", "create"}, operation) && options.imageRef == "" {
+		return usageError(stderr, "adapter kubernetes requires --image-ref for workspace render and create")
+	}
+	if options.adapter == deployment.AdapterMinikube && options.imageRef != "" {
+		return usageError(stderr, "adapter minikube does not accept --image-ref")
+	}
+	if options.imageRef != "" {
+		if _, _, err := deployment.ValidateReleasedImageReference(selection, options.imageRef); err != nil {
+			return usageError(stderr, err.Error())
+		}
+	}
+	manifestPath, cleanup, err := deps.materialize(deployment.ManifestRequest{
+		Adapter:        options.adapter,
+		Selection:      selection,
+		ImageReference: options.imageRef,
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "paw: %v\n", err)
 		return 1
@@ -254,7 +274,7 @@ func runWorkspaceRepository(args []string, stdout, stderr io.Writer, deps depend
 	if adapter == "" || context == "" || name == "" || revision == "" || source == "" {
 		return usageError(stderr, workspaceRepositoryUsage())
 	}
-	if adapter != "minikube" {
+	if !deployment.SupportsAdapter(adapter) {
 		return usageError(stderr, fmt.Sprintf("unsupported adapter %q", adapter))
 	}
 	request := repository.Request{
@@ -385,6 +405,15 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 				return workspaceOptions{}, fmt.Errorf("--context may only be specified once")
 			}
 			result.context = args[index]
+		case "--image-ref":
+			index++
+			if optionValueMissing(args, index) {
+				return workspaceOptions{}, fmt.Errorf("--image-ref requires a value")
+			}
+			if result.imageRef != "" {
+				return workspaceOptions{}, fmt.Errorf("--image-ref may only be specified once")
+			}
+			result.imageRef = args[index]
 		case "--delete-state":
 			if result.deleteState {
 				return workspaceOptions{}, fmt.Errorf("--delete-state may only be specified once")
@@ -466,18 +495,21 @@ func optionValueMissing(args []string, index int) bool {
 
 func workspaceUsage() string {
 	return `usage:
-  paw workspace render --adapter minikube --profile PROFILE --provider PROVIDER
-  paw workspace create --adapter minikube --context CONTEXT --profile PROFILE --provider PROVIDER
-  paw workspace inspect --adapter minikube --context CONTEXT [--json]
-  paw workspace connect --adapter minikube --context CONTEXT [--local-port PORT]
-  paw workspace pair --adapter minikube --context CONTEXT [--local-port PORT] [--ttl TTL] [--label LABEL] [--json]
-  paw workspace revoke --adapter minikube --context CONTEXT --pairing-id ID
-  paw workspace repository add --adapter minikube --context CONTEXT --source PATH --revision REF --name NAME
-  paw workspace destroy --adapter minikube --context CONTEXT --delete-state`
+  paw workspace render --adapter ADAPTER --profile PROFILE --provider PROVIDER [--image-ref IMAGE@DIGEST]
+  paw workspace create --adapter ADAPTER --context CONTEXT --profile PROFILE --provider PROVIDER [--image-ref IMAGE@DIGEST]
+  paw workspace inspect --adapter ADAPTER --context CONTEXT [--json]
+  paw workspace connect --adapter ADAPTER --context CONTEXT [--local-port PORT]
+  paw workspace pair --adapter ADAPTER --context CONTEXT [--local-port PORT] [--ttl TTL] [--label LABEL] [--json]
+  paw workspace revoke --adapter ADAPTER --context CONTEXT --pairing-id ID
+  paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME
+  paw workspace destroy --adapter ADAPTER --context CONTEXT --delete-state
+
+ADAPTER is kubernetes or minikube. The kubernetes adapter requires an immutable
+--image-ref for render and create; minikube uses the reviewed local :dev image.`
 }
 
 func workspaceRepositoryUsage() string {
-	return "usage: paw workspace repository add --adapter minikube --context CONTEXT --source PATH --revision REF --name NAME"
+	return "usage: paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME"
 }
 
 func executeCommand(name string, args []string, stdout, stderr io.Writer) error {
@@ -596,7 +628,7 @@ func runDoctor(output io.Writer, lookPath pathLookup) int {
 
 	dependencies := []dependency{
 		{name: "git", required: true, purpose: "repository operations"},
-		{name: "kubectl", purpose: "external Kubernetes diagnostics"},
+		{name: "kubectl", required: true, purpose: "Kubernetes workspace lifecycle"},
 		{name: "minikube", purpose: "local reference adapter"},
 		{name: "nix", purpose: "contributor builds only"},
 	}

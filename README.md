@@ -80,6 +80,25 @@ paw workspace repository add --adapter minikube --context minikube \
 paw workspace destroy --adapter minikube --context minikube --delete-state
 ```
 
+The portable lifecycle uses `--adapter kubernetes` with any explicitly selected
+Kubernetes context. `workspace render` and `workspace create` additionally
+require the immutable released image corresponding to the selected profile and
+provider:
+
+```sh
+paw workspace create --adapter kubernetes --context paw-k3s \
+  --profile core --provider codex \
+  --image-ref "$PAW_IMAGE_REF"
+paw workspace inspect --adapter kubernetes --context paw-k3s
+paw workspace connect --adapter kubernetes --context paw-k3s
+paw workspace destroy --adapter kubernetes --context paw-k3s --delete-state
+```
+
+`PAW_IMAGE_REF` must be a fully qualified reference such as
+`registry.example/team/paw-codex@sha256:…`; tags and profile/provider image-name
+mismatches are rejected. The `minikube` compatibility adapter selects the
+reviewed local `:dev` image and does not accept `--image-ref`.
+
 The local connection command holds an operator-controlled port-forward on
 `127.0.0.1:3773`; it never binds an ambient LAN interface. While that command is
 running, `workspace pair` returns a one-time browser link directly to the
@@ -135,11 +154,12 @@ while explicit adapters provide local-cluster lifecycle, ingress and identity,
 storage, registry, Git hosting, policy, and observability integration.
 
 PAW depends on behaviorally verified Kubernetes capabilities, not a named CNI
-or policy engine. The generic lifecycle must work through an explicitly selected
-Kubernetes context; environment adapters add only the integration their
-environment requires. Minikube with an enforcing policy implementation is the
-initial local reference, not a PAW dependency. Stock K3s and a non-production
-managed AKS environment form the first portability targets. See
+or policy engine. The `kubernetes` adapter implements the generic lifecycle
+through an explicitly selected context and immutable image reference;
+environment adapters add only the integration their environment requires.
+Minikube with an enforcing policy implementation is the initial local
+reference, not a PAW dependency. Stock K3s and a non-production managed AKS
+environment form the first portability targets. See
 [ADR-005](docs/adr/ADR-005-portable-kubernetes-networking-and-environment-conformance.md).
 Docker or another OCI runtime may build, transport, or execute images, but PAW
 does not maintain a parallel Docker Compose deployment.
