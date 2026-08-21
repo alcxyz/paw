@@ -1,6 +1,6 @@
 # ADR-001: Kubernetes-native collaborative AI workspaces
 
-- Status: Accepted
+- Status: Accepted; deployment-contract decision amended by ADR-006
 - Date: 2026-08-20
 
 ## Context
@@ -52,7 +52,11 @@ Multiple authenticated browser clients may connect to the same workspace. T3
 server replicas must remain one, and separate T3 servers must not share writable
 state.
 
-### 2. Kubernetes is the sole deployment contract
+### 2. Kubernetes is the initial deployment contract
+
+> ADR-006 amends this decision: Kubernetes remains the only implemented backend
+> for M1, while the workspace contract may support additional runtime backends
+> in later milestones.
 
 Use one OCI image and one set of Kubernetes resources for both local and remote
 execution.
@@ -62,7 +66,7 @@ execution.
 - Remote execution may use a self-managed, on-premises, or managed Kubernetes
   distribution.
 - The local container or VM driver is an implementation detail.
-- Docker Compose is not maintained as a parallel deployment path.
+- Docker Compose is not maintained as a parallel deployment path in M1.
 - Kustomize overlays may express bounded local and remote differences while
   sharing a common base.
 
@@ -173,11 +177,12 @@ More permissive modes require an explicitly stronger isolation profile.
 
 ## Alternatives considered
 
-### Docker Compose locally and Kubernetes remotely
+### Docker Compose locally and Kubernetes remotely in M1
 
-Rejected as the canonical approach because it duplicates lifecycle, networking,
-storage, and policy configuration and creates predictable drift. An OCI builder
-or runtime may still use Docker without introducing Compose.
+Rejected for the initial milestone because it duplicates lifecycle, networking,
+storage, and policy work before the shared contract is proven. ADR-006 retains
+Docker/Compose as a possible later backend whose artifacts must be derived from
+the same workspace contract rather than maintained independently.
 
 ### Devbox as the toolchain and container interface
 

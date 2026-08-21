@@ -3,11 +3,12 @@
 PAW is a portable, isolated collaboration environment for AI-assisted platform
 engineering. It combines a headless T3 Code server, multiple coding-agent
 providers, selected repositories, reproducible tooling, and explicit authority
-inside a Kubernetes workspace.
+inside an isolated workspace runtime.
 
-PAW is intended to run on a local Kubernetes implementation or a remote
-self-managed, on-premises, or managed cluster without maintaining a separate
-deployment model for each environment.
+Kubernetes is the currently implemented runtime backend. It may be provided by
+a local implementation or a remote self-managed, on-premises, or managed
+cluster. The workspace contract leaves room for later runtime backends without
+requiring independently maintained deployment models.
 
 > PAW is in early implementation. The CLI and reproducible build foundation
 > exist, but the workspace runtime is not ready for operational use. Accepted
@@ -19,7 +20,7 @@ deployment model for each environment.
 - Let multiple authenticated browser clients collaborate through one workspace.
 - Support Codex, Claude Code, and GitHub Copilot through T3 provider adapters.
 - Expose only the repositories and authority selected for a task.
-- Use the same OCI image and Kubernetes resources locally and remotely.
+- Use the same OCI image and workspace contract locally and remotely.
 - Compose tooling and policy into reviewable capability profiles.
 - Keep provider credentials, decryption identities, and broad host access out of
   workspace images.
@@ -147,11 +148,12 @@ other large dependencies are included only when selected by a released profile.
 CI measures closure and OCI sizes and enforces budgets established from the first
 optimized images.
 
-### Kubernetes
+### Runtime backends
 
-Kubernetes is the sole deployment contract. A portable core uses standard APIs,
-while explicit adapters provide local-cluster lifecycle, ingress and identity,
-storage, registry, Git hosting, policy, and observability integration.
+Kubernetes is the only implemented backend for M1. Its portable core uses
+standard APIs, while explicit environment adapters provide local-cluster
+lifecycle, ingress and identity, storage, registry, Git hosting, policy, and
+observability integration.
 
 PAW depends on behaviorally verified Kubernetes capabilities, not a named CNI
 or policy engine. The `kubernetes` adapter implements the generic lifecycle
@@ -161,8 +163,15 @@ Minikube with an enforcing policy implementation is the initial local
 reference, not a PAW dependency. Stock K3s and a non-production managed AKS
 environment form the first portability targets. See
 [ADR-005](docs/adr/ADR-005-portable-kubernetes-networking-and-environment-conformance.md).
-Docker or another OCI runtime may build, transport, or execute images, but PAW
-does not maintain a parallel Docker Compose deployment.
+Minikube and K3s are Kubernetes environments, not separate runtime backends.
+The existing `minikube` adapter is an M1 compatibility facade that combines the
+Kubernetes backend with local image behavior.
+
+A Docker/Compose backend is intentionally deferred beyond M1. If added, it must
+derive from the same workspace contract, declare which capabilities it can
+enforce, fail closed for unsupported profiles, and pass backend-specific live
+conformance. See
+[ADR-006](docs/adr/ADR-006-staged-runtime-backend-extensibility.md).
 
 ### Capability profiles
 
@@ -234,6 +243,7 @@ Start with:
 - [ADR-003: PAW v0 capability contract and threat model](docs/adr/ADR-003-v0-capability-contract-and-threat-model.md)
 - [ADR-004: Streamed Git bundle repository materialization](docs/adr/ADR-004-streamed-git-bundle-repository-materialization.md)
 - [ADR-005: Portable Kubernetes networking and environment conformance](docs/adr/ADR-005-portable-kubernetes-networking-and-environment-conformance.md)
+- [ADR-006: Staged runtime-backend extensibility](docs/adr/ADR-006-staged-runtime-backend-extensibility.md)
 
 ## Development
 
