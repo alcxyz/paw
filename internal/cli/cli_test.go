@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	deployment "git.alc.xyz/alcxyz/paw/deploy"
@@ -204,7 +208,7 @@ func TestWorkspaceCreateRequiresExplicitContext(t *testing.T) {
 		workspaceTestDependencies(nil),
 	)
 
-	if exitCode != 2 || !strings.Contains(stderr.String(), "require --context") {
+	if exitCode != 2 || !strings.Contains(stderr.String(), "requires --context") {
 		t.Fatalf("expected context usage error, got %d and %q", exitCode, stderr.String())
 	}
 }
@@ -320,6 +324,252 @@ func TestWorkspaceDestroyDeletesExactKustomization(t *testing.T) {
 	}
 	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
 		t.Fatalf("unexpected destroy result: exit=%d args=%v", exitCode, commandArgs)
+	}
+}
+
+func TestWorkspaceInspectUsesExactResources(t *testing.T) {
+	var commandArgs []string
+	deps := workspaceTestDependencies(func(_ string, args []string, _, _ io.Writer) error {
+		commandArgs = slices.Clone(args)
+		return nil
+	})
+
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "inspect",
+			"--adapter", "minikube",
+			"--context", "paw-local",
+			"--json",
+		},
+		&bytes.Buffer{},
+		&bytes.Buffer{},
+		deps,
+	)
+
+	expected := []string{
+		"--context", "paw-local",
+		"--namespace", "paw-workspace",
+		"get",
+		"statefulset/workspace",
+		"pod/workspace-0",
+		"persistentvolumeclaim/workspace-state",
+		"service/t3",
+		"--output", "json",
+	}
+	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
+		t.Fatalf("unexpected inspect result: exit=%d args=%v", exitCode, commandArgs)
+	}
+}
+
+func TestWorkspaceConnectIsLoopbackOnly(t *testing.T) {
+	var commandArgs []string
+	deps := workspaceTestDependencies(func(_ string, args []string, _, _ io.Writer) error {
+		commandArgs = slices.Clone(args)
+		return nil
+	})
+
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "connect",
+			"--adapter", "minikube",
+			"--context", "paw-local",
+			"--local-port", "43773",
+		},
+		&bytes.Buffer{},
+		&bytes.Buffer{},
+		deps,
+	)
+
+	expected := []string{
+		"--context", "paw-local",
+		"--namespace", "paw-workspace",
+		"port-forward",
+		"--address", "127.0.0.1",
+		"service/t3",
+		"43773:3773",
+	}
+	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
+		t.Fatalf("unexpected connect result: exit=%d args=%v", exitCode, commandArgs)
+	}
+}
+
+func TestWorkspacePairMintsShortLivedCredential(t *testing.T) {
+	var stdout bytes.Buffer
+	var commandArgs []string
+	deps := workspaceTestDependencies(func(_ string, args []string, output, _ io.Writer) error {
+		commandArgs = slices.Clone(args)
+		_, _ = io.WriteString(output, "pairing response")
+		return nil
+	})
+
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "pair",
+			"--adapter", "minikube",
+			"--context", "paw-local",
+			"--ttl", "15m",
+			"--label", "phone-browser",
+			"--json",
+		},
+		&stdout,
+		&bytes.Buffer{},
+		deps,
+	)
+
+	expected := []string{
+		"--context", "paw-local",
+		"--namespace", "paw-workspace",
+		"exec", "workspace-0", "--",
+		"t3", "auth", "pairing", "create",
+		"--base-dir", "/workspace/state/t3",
+		"--base-url", "http://127.0.0.1:3773",
+		"--ttl", "15m",
+		"--label", "phone-browser",
+		"--json",
+	}
+	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
+		t.Fatalf("unexpected pair result: exit=%d args=%v", exitCode, commandArgs)
+	}
+	if stdout.String() != "pairing response" {
+		t.Fatalf("pairing output was not returned to the operator: %q", stdout.String())
+	}
+}
+
+func TestWorkspacePairRejectsLongLivedCredential(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "pair",
+			"--adapter", "minikube",
+			"--context", "paw-local",
+			"--ttl", "24h",
+		},
+		&bytes.Buffer{},
+		&stderr,
+		workspaceTestDependencies(nil),
+	)
+
+	if exitCode != 2 || !strings.Contains(stderr.String(), "no longer than 1h") {
+		t.Fatalf("expected bounded TTL error, got %d and %q", exitCode, stderr.String())
+	}
+}
+
+func TestWorkspaceRevokeUsesPairingIdentifier(t *testing.T) {
+	var commandArgs []string
+	deps := workspaceTestDependencies(func(_ string, args []string, _, _ io.Writer) error {
+		commandArgs = slices.Clone(args)
+		return nil
+	})
+
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "revoke",
+			"--adapter", "minikube",
+			"--context", "paw-local",
+			"--pairing-id", "pairing-test-id",
+		},
+		&bytes.Buffer{},
+		&bytes.Buffer{},
+		deps,
+	)
+
+	expected := []string{
+		"--context", "paw-local",
+		"--namespace", "paw-workspace",
+		"exec", "workspace-0", "--",
+		"t3", "auth", "pairing", "revoke",
+		"--base-dir", "/workspace/state/t3",
+		"pairing-test-id",
+	}
+	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
+		t.Fatalf("unexpected revoke result: exit=%d args=%v", exitCode, commandArgs)
+	}
+}
+
+func TestWorkspaceRevokeRequiresPairingIdentifier(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "revoke",
+			"--adapter", "minikube",
+			"--context", "paw-local",
+		},
+		&bytes.Buffer{},
+		&stderr,
+		workspaceTestDependencies(nil),
+	)
+
+	if exitCode != 2 || !strings.Contains(stderr.String(), "requires --pairing-id") {
+		t.Fatalf("expected pairing identifier error, got %d and %q", exitCode, stderr.String())
+	}
+}
+
+func TestWorkspaceRejectsOperatorFlagsOnWrongOperation(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "connect",
+			"--adapter", "minikube",
+			"--context", "paw-local",
+			"--json",
+		},
+		&bytes.Buffer{},
+		&stderr,
+		workspaceTestDependencies(nil),
+	)
+
+	if exitCode != 2 || !strings.Contains(stderr.String(), "--json is only valid") {
+		t.Fatalf("expected scoped option error, got %d and %q", exitCode, stderr.String())
+	}
+}
+
+func TestWorkspaceOptionsDoNotConsumeAnotherFlagAsAValue(t *testing.T) {
+	for _, option := range []string{
+		"--adapter",
+		"--context",
+		"--label",
+		"--local-port",
+		"--pairing-id",
+		"--profile",
+		"--provider",
+		"--ttl",
+	} {
+		t.Run(option, func(t *testing.T) {
+			_, err := parseWorkspaceOptions([]string{option, "--json"})
+			if err == nil || !strings.Contains(err.Error(), option+" requires a value") {
+				t.Fatalf("expected missing value error for %s, got %v", option, err)
+			}
+		})
+	}
+}
+
+func TestExecuteCommandForwardsTerminationSignal(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	defer stdoutReader.Close()
+
+	signals := make(chan os.Signal, 1)
+	ready := make(chan struct{})
+	go func() {
+		scanner := bufio.NewScanner(stdoutReader)
+		if scanner.Scan() && scanner.Text() == "ready" {
+			close(ready)
+			signals <- syscall.SIGTERM
+		}
+	}()
+
+	err := executeCommandWithSignals(
+		"sh",
+		[]string{"-c", "trap 'exit 42' TERM; echo ready; while :; do :; done"},
+		stdoutWriter,
+		io.Discard,
+		signals,
+	)
+	_ = stdoutWriter.Close()
+	<-ready
+
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) || exitError.ExitCode() != 42 {
+		t.Fatalf("expected forwarded SIGTERM to trigger exit 42, got %v", err)
 	}
 }
 

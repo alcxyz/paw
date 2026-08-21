@@ -69,8 +69,30 @@ paw profile show platform-readonly --json
 paw workspace render --adapter minikube --profile core --provider codex
 paw workspace create --adapter minikube --context minikube \
   --profile platform-readonly --provider opencode
+paw workspace inspect --adapter minikube --context minikube
+paw workspace connect --adapter minikube --context minikube
+paw workspace pair --adapter minikube --context minikube \
+  --ttl 10m --label mac-browser
+paw workspace revoke --adapter minikube --context minikube --pairing-id ID
 paw workspace destroy --adapter minikube --context minikube --delete-state
 ```
+
+The local connection command holds an operator-controlled port-forward on
+`127.0.0.1:3773`; it never binds an ambient LAN interface. While that command is
+running, `workspace pair` returns a one-time browser link directly to the
+operator. Pairing credentials default to ten minutes and the CLI rejects TTLs
+longer than one hour. Use the same `--local-port` on both commands when port
+3773 is unavailable. Pairing output is sensitive and must not be pasted into
+logs, issues, or shell tracing.
+
+Use `workspace pair --json` when the pairing identifier must be retained for
+explicit revocation. `workspace revoke --pairing-id ID` invalidates that
+credential through the same selected pod and context.
+
+`workspace inspect --json` exposes the selected StatefulSet, pod, claim, and T3
+Service through the explicitly named Kubernetes context. The v0 destroy command
+requires `--delete-state` because the Minikube workspace state policy is
+ephemeral.
 
 ### Nix flake
 
