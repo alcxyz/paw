@@ -229,6 +229,23 @@ registry transfer, largest closure members and layers, image configuration, and
 manifest digest. The image runs as UID/GID 65532 and contains no Nix CLI,
 daemon, Electron runtime, or provider executable.
 
+Build the focused provider variants or their equivalent reports with:
+
+```sh
+nix build .#paw-codex-image
+nix build .#paw-claude-code-image
+nix build .#paw-opencode-image
+nix build .#paw-codex-image-report
+nix build .#paw-claude-code-image-report
+nix build .#paw-opencode-image-report
+```
+
+Each variant contains one provider executable and inherits the same unprivileged
+T3 runtime contract. No provider credential or authentication state is present
+in the build. OpenCode supplies T3's GitHub Copilot path; users authenticate the
+Copilot subscription at runtime through OpenCode's
+[documented device flow](https://opencode.ai/docs/providers/#github-copilot).
+
 ## Sensitive material
 
 This repository is private, but credentials, decrypted configuration, internal

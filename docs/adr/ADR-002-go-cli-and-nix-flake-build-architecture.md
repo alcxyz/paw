@@ -162,18 +162,56 @@ The first provider-free `paw-core` image for `linux/amd64`, measured on
 | --- | ---: | ---: |
 | Unique runtime-closure NAR | 551,754,704 bytes | 592,445,440 bytes |
 | Uncompressed OCI layers | 613,201,920 bytes | 655,360,000 bytes |
-| Compressed registry transfer | 173,219,750 bytes | 188,743,680 bytes |
+| Compressed registry transfer | 173,219,812 bytes | 188,743,680 bytes |
 | Layers | 80 | 80 |
 
 The compressed-transfer metric is the OCI manifest, config, and individually
 gzip-compressed layer descriptors produced from the Docker-compatible archive.
-The archive itself is 165,224,667 bytes. The image includes the headless T3
+The archive itself is 165,224,683 bytes. The image includes the headless T3
 runtime, a reduced Git build with HTTPS support, SSH, Bash, certificates, and
 basic shell tools. It runs as UID/GID 65532 and excludes provider executables,
 Electron, the Nix CLI and daemon, Python, pnpm, and build toolchains.
 
-These are initial `amd64` budgets. Provider-image budgets and native `arm64`
-measurements must be recorded before publication of the common image index.
+The first single-provider `linux/amd64` images establish these additional
+measurements and budgets:
+
+`paw-codex` with Codex 0.147.0:
+
+| Metric | Measured | Budget |
+| --- | ---: | ---: |
+| Runtime-closure NAR | 1,053,314,936 bytes | 1,132,462,080 bytes |
+| Uncompressed layers | 1,114,787,840 bytes | 1,205,862,400 bytes |
+| Registry transfer | 350,393,253 bytes | 382,730,240 bytes |
+
+`paw-claude-code` with Claude Code 2.1.234:
+
+| Metric | Measured | Budget |
+| --- | ---: | ---: |
+| Runtime-closure NAR | 895,640,568 bytes | 964,689,920 bytes |
+| Uncompressed layers | 958,801,920 bytes | 1,038,090,240 bytes |
+| Registry transfer | 283,012,021 bytes | 309,329,920 bytes |
+
+`paw-opencode` with OpenCode 1.18.18:
+
+| Metric | Measured | Budget |
+| --- | ---: | ---: |
+| Runtime-closure NAR | 751,366,696 bytes | 812,646,400 bytes |
+| Uncompressed layers | 812,840,960 bytes | 880,803,840 bytes |
+| Registry transfer | 242,981,162 bytes | 267,386,880 bytes |
+
+All three images contain 80 layers. Their compressed Docker archives are
+335,242,040 bytes for Codex 0.147.0, 270,844,835 bytes for Claude Code 2.1.234,
+and 231,685,666 bytes for OpenCode 1.18.18. Each provider contract rejects the
+other provider executables and the same desktop, Nix, and build runtimes
+rejected by `paw-core`.
+
+The pinned Claude Code package has an unfree license. PAW permits that exact
+Nix package name rather than enabling unfree packages globally. This packaging
+exception does not accept provider terms on a user's behalf and does not place
+authentication material in a derivation or image.
+
+Native `arm64` measurements must still be recorded before publication of the
+common image index.
 
 ### 6. Package providers without packaging credentials
 

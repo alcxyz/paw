@@ -13,11 +13,17 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
+      pkgsFor =
+        system:
+        import nixpkgs {
+          inherit system;
+          config.allowUnfreePredicate = package: nixpkgs.lib.getName package == "claude-code";
+        };
       contract = builtins.fromJSON (builtins.readFile ./contract/v0.json);
       profileEvaluations =
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = pkgsFor system;
           evalProfile =
             module:
             import ./nix/lib/eval-profile.nix {
@@ -36,7 +42,7 @@
       packages = forAllSystems (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = pkgsFor system;
           paw = pkgs.buildGoModule {
             pname = "paw";
             version = "0.0.0-dev";
@@ -70,13 +76,62 @@
             t3codeHeadless = t3code-headless;
             runtimePackages = (profileEvaluations system).core.runtimePackages;
           };
+          paw-codex-image = pkgs.callPackage ./nix/images/paw-core.nix {
+            imageName = "paw-codex";
+            providerPackages = [ pkgs.codex ];
+            providers = [ "codex" ];
+            t3codeHeadless = t3code-headless;
+            runtimePackages = (profileEvaluations system).core.runtimePackages;
+          };
+          paw-claude-code-image = pkgs.callPackage ./nix/images/paw-core.nix {
+            imageName = "paw-claude-code";
+            providerPackages = [ pkgs.claude-code ];
+            providers = [ "claude-code" ];
+            t3codeHeadless = t3code-headless;
+            runtimePackages = (profileEvaluations system).core.runtimePackages;
+          };
+          paw-opencode-image = pkgs.callPackage ./nix/images/paw-core.nix {
+            imageName = "paw-opencode";
+            providerPackages = [ pkgs.opencode ];
+            providers = [ "opencode" ];
+            t3codeHeadless = t3code-headless;
+            runtimePackages = (profileEvaluations system).core.runtimePackages;
+          };
           paw-core-closure-info = pkgs.closureInfo {
             rootPaths = paw-core-image.runtimeContents;
           };
+          paw-codex-closure-info = pkgs.closureInfo {
+            rootPaths = paw-codex-image.runtimeContents;
+          };
+          paw-claude-code-closure-info = pkgs.closureInfo {
+            rootPaths = paw-claude-code-image.runtimeContents;
+          };
+          paw-opencode-closure-info = pkgs.closureInfo {
+            rootPaths = paw-opencode-image.runtimeContents;
+          };
           paw-core-image-report = pkgs.callPackage ./nix/images/report.nix {
             image = paw-core-image;
+            name = paw-core-image.imageName;
             reportScript = ./scripts/report-image.py;
             runtimeContents = paw-core-image.runtimeContents;
+          };
+          paw-codex-image-report = pkgs.callPackage ./nix/images/report.nix {
+            image = paw-codex-image;
+            name = paw-codex-image.imageName;
+            reportScript = ./scripts/report-image.py;
+            runtimeContents = paw-codex-image.runtimeContents;
+          };
+          paw-claude-code-image-report = pkgs.callPackage ./nix/images/report.nix {
+            image = paw-claude-code-image;
+            name = paw-claude-code-image.imageName;
+            reportScript = ./scripts/report-image.py;
+            runtimeContents = paw-claude-code-image.runtimeContents;
+          };
+          paw-opencode-image-report = pkgs.callPackage ./nix/images/report.nix {
+            image = paw-opencode-image;
+            name = paw-opencode-image.imageName;
+            reportScript = ./scripts/report-image.py;
+            runtimeContents = paw-opencode-image.runtimeContents;
           };
         in
         {
@@ -85,9 +140,18 @@
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           inherit
+            paw-claude-code-closure-info
+            paw-claude-code-image
+            paw-claude-code-image-report
+            paw-codex-closure-info
+            paw-codex-image
+            paw-codex-image-report
             paw-core-closure-info
             paw-core-image
             paw-core-image-report
+            paw-opencode-closure-info
+            paw-opencode-image
+            paw-opencode-image-report
             t3code-headless
             t3code-headless-closure-info
             ;
@@ -108,7 +172,7 @@
       checks = forAllSystems (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = pkgsFor system;
           profilesJSON = pkgs.writeText "paw-profiles-${system}.json" (
             builtins.toJSON self.pawProfiles.${system}
           );
@@ -116,6 +180,12 @@
           t3code-headless-closure-info = self.packages.${system}.t3code-headless-closure-info;
           paw-core-closure-info = self.packages.${system}.paw-core-closure-info;
           paw-core-image-report = self.packages.${system}.paw-core-image-report;
+          paw-codex-closure-info = self.packages.${system}.paw-codex-closure-info;
+          paw-codex-image-report = self.packages.${system}.paw-codex-image-report;
+          paw-claude-code-closure-info = self.packages.${system}.paw-claude-code-closure-info;
+          paw-claude-code-image-report = self.packages.${system}.paw-claude-code-image-report;
+          paw-opencode-closure-info = self.packages.${system}.paw-opencode-closure-info;
+          paw-opencode-image-report = self.packages.${system}.paw-opencode-image-report;
         in
         {
           paw = self.packages.${system}.paw;
@@ -300,6 +370,8 @@
                   .image.architecture == "amd64" and
                   .image.runtime.user == "65532:65532" and
                   .image.runtime.workingDirectory == "/workspace/work" and
+                  .image.runtime.labels["paw.alc.xyz/providers"] == "" and
+                  .image.runtime.labels["paw.alc.xyz/provider-packages"] == "" and
                   .image.runtime.command[0:5] ==
                     ["--log-level", "warn", "start", "--mode", "web"]
                 ' "$report" >/dev/null
@@ -325,13 +397,129 @@
                     layerCount: $layers
                   }' >"$out/budgets.json"
               '';
+
+          provider-image-contract =
+            pkgs.runCommand "paw-provider-image-contract"
+              {
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                export HOME="$TMPDIR/home"
+                export XDG_CACHE_HOME="$TMPDIR/cache"
+                export XDG_CONFIG_HOME="$TMPDIR/config"
+                export XDG_DATA_HOME="$TMPDIR/data"
+                mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+
+                check_image() {
+                  name=$1
+                  provider=$2
+                  package_pattern=$3
+                  report=$4
+                  closure_info=$5
+                  closure_budget=$6
+                  uncompressed_budget=$7
+                  compressed_budget=$8
+
+                  closure_bytes=$(jq -r '.runtimeClosure.narBytes' "$report")
+                  uncompressed_bytes=$(jq -r '.image.uncompressedLayerBytes' "$report")
+                  compressed_bytes=$(jq -r '.image.compressedRegistryBytes' "$report")
+                  layer_count=$(jq -r '.image.layerCount' "$report")
+
+                  if [ "$closure_bytes" -gt "$closure_budget" ]; then
+                    echo "$name closure exceeds its budget" >&2
+                    exit 1
+                  fi
+                  if [ "$uncompressed_bytes" -gt "$uncompressed_budget" ]; then
+                    echo "$name uncompressed image exceeds its budget" >&2
+                    exit 1
+                  fi
+                  if [ "$compressed_bytes" -gt "$compressed_budget" ]; then
+                    echo "$name registry transfer exceeds its budget" >&2
+                    exit 1
+                  fi
+                  if [ "$layer_count" -gt 80 ]; then
+                    echo "$name layer count exceeds its budget" >&2
+                    exit 1
+                  fi
+
+                  jq --exit-status \
+                    --arg name "$name" \
+                    --arg provider "$provider" '
+                      .image.name == $name and
+                      .image.architecture == "amd64" and
+                      .image.runtime.user == "65532:65532" and
+                      .image.runtime.workingDirectory == "/workspace/work" and
+                      .image.runtime.labels["paw.alc.xyz/profile"] == "core" and
+                      .image.runtime.labels["paw.alc.xyz/providers"] == $provider and
+                      (.image.runtime.labels["paw.alc.xyz/provider-packages"] | length) > 0 and
+                      .image.runtime.command[0:5] ==
+                        ["--log-level", "warn", "start", "--mode", "web"]
+                    ' "$report" >/dev/null
+
+                  if ! grep -Eq -- "$package_pattern" "$closure_info/store-paths"; then
+                    echo "$name does not contain its declared provider package" >&2
+                    exit 1
+                  fi
+
+                  forbidden='-(electron|t3code-desktop|pnpm|python3|nix)-|-nodejs-[0-9]'
+                  case "$provider" in
+                    codex) forbidden="$forbidden|-claude-code-|-opencode-" ;;
+                    claude-code) forbidden="$forbidden|-codex-|-opencode-" ;;
+                    opencode) forbidden="$forbidden|-claude-code-|-codex-" ;;
+                  esac
+                  if grep -Eiq -- "$forbidden" "$closure_info/store-paths"; then
+                    echo "$name contains a desktop, another provider, build, or Nix runtime" >&2
+                    grep -Ei -- "$forbidden" "$closure_info/store-paths" >&2
+                    exit 1
+                  fi
+
+                  mkdir -p "$out/$name"
+                  cp "$report" "$out/$name/report.json"
+                  jq -n \
+                    --argjson closure "$closure_budget" \
+                    --argjson uncompressed "$uncompressed_budget" \
+                    --argjson compressed "$compressed_budget" \
+                    '{
+                      closureNarBytes: $closure,
+                      uncompressedLayerBytes: $uncompressed,
+                      compressedRegistryBytes: $compressed,
+                      layerCount: 80
+                    }' >"$out/$name/budgets.json"
+                }
+
+                ${pkgs.codex}/bin/codex --version >/dev/null
+                ${pkgs.claude-code}/bin/claude --version >/dev/null
+                ${pkgs.opencode}/bin/opencode --version >/dev/null
+
+                check_image \
+                  paw-codex codex '-codex-' \
+                  ${paw-codex-image-report}/report.json \
+                  ${paw-codex-closure-info} \
+                  $((1080 * 1024 * 1024)) \
+                  $((1150 * 1024 * 1024)) \
+                  $((365 * 1024 * 1024))
+                check_image \
+                  paw-claude-code claude-code '-claude-code-' \
+                  ${paw-claude-code-image-report}/report.json \
+                  ${paw-claude-code-closure-info} \
+                  $((920 * 1024 * 1024)) \
+                  $((990 * 1024 * 1024)) \
+                  $((295 * 1024 * 1024))
+                check_image \
+                  paw-opencode opencode '-opencode-' \
+                  ${paw-opencode-image-report}/report.json \
+                  ${paw-opencode-closure-info} \
+                  $((775 * 1024 * 1024)) \
+                  $((840 * 1024 * 1024)) \
+                  $((255 * 1024 * 1024))
+              '';
         }
       );
 
       devShells = forAllSystems (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = pkgsFor system;
         in
         {
           default = pkgs.mkShellNoCC {
@@ -350,6 +538,6 @@
         }
       );
 
-      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt);
+      formatter = forAllSystems (system: (pkgsFor system).nixfmt);
     };
 }

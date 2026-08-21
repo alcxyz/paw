@@ -1,15 +1,17 @@
 {
   image,
   jq,
+  name,
   python3,
   reportScript,
   runtimeContents,
   skopeo,
   stdenvNoCC,
+  tag ? "dev",
 }:
 
 stdenvNoCC.mkDerivation {
-  pname = "paw-core-image-report";
+  pname = "${name}-image-report";
   version = "0.0.0-dev";
 
   __structuredAttrs = true;
@@ -33,8 +35,8 @@ stdenvNoCC.mkDerivation {
       --archive ${image} \
       --oci "$TMPDIR/oci" \
       --structured-attrs "$NIX_ATTRS_JSON_FILE" \
-      --name paw-core \
-      --tag dev \
+      --name ${name} \
+      --tag ${tag} \
       --output "$out/report.json"
 
     jq --exit-status . "$out/report.json" >/dev/null
