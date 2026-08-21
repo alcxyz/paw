@@ -134,9 +134,15 @@ Kubernetes is the sole deployment contract. A portable core uses standard APIs,
 while explicit adapters provide local-cluster lifecycle, ingress and identity,
 storage, registry, Git hosting, policy, and observability integration.
 
-Minikube is the initial local reference adapter, not a PAW dependency. Docker or
-another OCI runtime may build, transport, or execute images, but PAW does not
-maintain a parallel Docker Compose deployment.
+PAW depends on behaviorally verified Kubernetes capabilities, not a named CNI
+or policy engine. The generic lifecycle must work through an explicitly selected
+Kubernetes context; environment adapters add only the integration their
+environment requires. Minikube with an enforcing policy implementation is the
+initial local reference, not a PAW dependency. Stock K3s and a non-production
+managed AKS environment form the first portability targets. See
+[ADR-005](docs/adr/ADR-005-portable-kubernetes-networking-and-environment-conformance.md).
+Docker or another OCI runtime may build, transport, or execute images, but PAW
+does not maintain a parallel Docker Compose deployment.
 
 ### Capability profiles
 
@@ -206,6 +212,8 @@ Start with:
 - [ADR-001: Kubernetes-native collaborative AI workspaces](docs/adr/ADR-001-kubernetes-native-collaborative-ai-workspaces.md)
 - [ADR-002: Go CLI and Nix flake build architecture](docs/adr/ADR-002-go-cli-and-nix-flake-build-architecture.md)
 - [ADR-003: PAW v0 capability contract and threat model](docs/adr/ADR-003-v0-capability-contract-and-threat-model.md)
+- [ADR-004: Streamed Git bundle repository materialization](docs/adr/ADR-004-streamed-git-bundle-repository-materialization.md)
+- [ADR-005: Portable Kubernetes networking and environment conformance](docs/adr/ADR-005-portable-kubernetes-networking-and-environment-conformance.md)
 
 ## Development
 
@@ -243,6 +251,11 @@ in-memory pairing and revocation, clean logs, and deletion of the namespace and
 PVC Kubernetes objects. Backing PV and storage reclamation remain
 storage-adapter requirements and are not claimed by this check. Pairing
 credentials pass directly from `paw` to `jq` and are never stored or printed.
+
+This Minikube script is the first reference check, not the portable environment
+contract. The planned generic verifier will use in-cluster positive and negative
+controls to prove ingress and egress enforcement without relying on the reported
+CNI name, then exercise the same contract on K3s and non-production AKS.
 
 Inspect the evaluated, machine-readable profile contract:
 
