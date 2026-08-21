@@ -4,13 +4,23 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"text/tabwriter"
 
+	deployment "git.alc.xyz/alcxyz/paw/deploy"
 	"git.alc.xyz/alcxyz/paw/internal/buildinfo"
 	"git.alc.xyz/alcxyz/paw/internal/profile"
 )
 
 type pathLookup func(string) (string, error)
+type commandRunner func(string, []string, io.Writer, io.Writer) error
+type manifestMaterializer func(string) (string, func(), error)
+
+type dependencies struct {
+	lookPath    pathLookup
+	runCommand  commandRunner
+	materialize manifestMaterializer
+}
 
 // Run executes the PAW CLI and returns a process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -18,6 +28,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
+	return runWithDependencies(args, stdout, stderr, dependencies{
+		lookPath:    lookPath,
+		runCommand:  executeCommand,
+		materialize: deployment.Materialize,
+	})
+}
+
+func runWithDependencies(args []string, stdout, stderr io.Writer, deps dependencies) int {
 	if len(args) == 0 {
 		printUsage(stdout)
 		return 0
@@ -37,13 +55,15 @@ func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
 		if len(args) != 1 {
 			return usageError(stderr, "doctor does not accept arguments")
 		}
-		return runDoctor(stdout, lookPath)
+		return runDoctor(stdout, deps.lookPath)
 	case "profile":
 		if len(args) == 2 && args[1] == "list" {
 			printProfiles(stdout)
 			return 0
 		}
 		return usageError(stderr, "usage: paw profile list")
+	case "workspace":
+		return runWorkspace(args[1:], stdout, stderr, deps)
 	default:
 		return usageError(stderr, fmt.Sprintf("unknown command %q", args[0]))
 	}
@@ -58,8 +78,113 @@ Usage:
 Commands:
   doctor        Inspect local PAW dependencies
   profile list  List built-in workspace profiles
+  workspace     Render, create, or destroy a workspace
   version       Print build version information
   help          Show this help`)
+}
+
+type workspaceOptions struct {
+	adapter     string
+	context     string
+	deleteState bool
+}
+
+func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) int {
+	if len(args) == 0 || !slices.Contains([]string{"render", "create", "destroy"}, args[0]) {
+		return usageError(stderr, workspaceUsage())
+	}
+	operation := args[0]
+	options, err := parseWorkspaceOptions(args[1:])
+	if err != nil {
+		return usageError(stderr, err.Error())
+	}
+	if options.adapter == "" {
+		return usageError(stderr, "workspace requires --adapter minikube")
+	}
+	if operation == "render" && (options.context != "" || options.deleteState) {
+		return usageError(stderr, "workspace render only accepts --adapter")
+	}
+	if operation != "render" && options.context == "" {
+		return usageError(stderr, "workspace create and destroy require --context")
+	}
+	if operation != "destroy" && options.deleteState {
+		return usageError(stderr, "--delete-state is only valid for workspace destroy")
+	}
+	if operation == "destroy" && !options.deleteState {
+		return usageError(stderr, "workspace destroy requires --delete-state for the v0 ephemeral workspace")
+	}
+
+	manifestPath, cleanup, err := deps.materialize(options.adapter)
+	if err != nil {
+		fmt.Fprintf(stderr, "paw: %v\n", err)
+		return 1
+	}
+	defer cleanup()
+
+	commandArgs := []string{"kustomize", manifestPath}
+	if operation == "create" {
+		commandArgs = []string{"--context", options.context, "apply", "-k", manifestPath}
+	}
+	if operation == "destroy" {
+		commandArgs = []string{
+			"--context", options.context,
+			"delete", "-k", manifestPath,
+			"--ignore-not-found=true",
+		}
+	}
+	if err := deps.runCommand("kubectl", commandArgs, stdout, stderr); err != nil {
+		fmt.Fprintf(stderr, "paw: kubectl %s failed: %v\n", operation, err)
+		return 1
+	}
+	return 0
+}
+
+func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
+	var result workspaceOptions
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--adapter":
+			index++
+			if index == len(args) || args[index] == "" {
+				return workspaceOptions{}, fmt.Errorf("--adapter requires a value")
+			}
+			if result.adapter != "" {
+				return workspaceOptions{}, fmt.Errorf("--adapter may only be specified once")
+			}
+			result.adapter = args[index]
+		case "--context":
+			index++
+			if index == len(args) || args[index] == "" {
+				return workspaceOptions{}, fmt.Errorf("--context requires a value")
+			}
+			if result.context != "" {
+				return workspaceOptions{}, fmt.Errorf("--context may only be specified once")
+			}
+			result.context = args[index]
+		case "--delete-state":
+			if result.deleteState {
+				return workspaceOptions{}, fmt.Errorf("--delete-state may only be specified once")
+			}
+			result.deleteState = true
+		default:
+			return workspaceOptions{}, fmt.Errorf("unknown workspace option %q", args[index])
+		}
+	}
+	return result, nil
+}
+
+func workspaceUsage() string {
+	return `usage:
+  paw workspace render --adapter minikube
+  paw workspace create --adapter minikube --context CONTEXT
+  paw workspace destroy --adapter minikube --context CONTEXT --delete-state`
+}
+
+func executeCommand(name string, args []string, stdout, stderr io.Writer) error {
+	command := exec.Command(name, args...)
+	command.Stdout = stdout
+	command.Stderr = stderr
+	return command.Run()
 }
 
 func usageError(stderr io.Writer, message string) int {
