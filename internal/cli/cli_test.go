@@ -632,6 +632,29 @@ func TestWorkspaceRepositoryAddRequiresCompleteSelection(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRepositoryOptionsDoNotConsumeAnotherFlagAsAValue(t *testing.T) {
+	for _, option := range []string{
+		"--adapter",
+		"--context",
+		"--name",
+		"--revision",
+		"--source",
+	} {
+		t.Run(option, func(t *testing.T) {
+			var stderr bytes.Buffer
+			exitCode := runWithDependencies(
+				[]string{"workspace", "repository", "add", option, "--context"},
+				&bytes.Buffer{},
+				&stderr,
+				workspaceTestDependencies(nil),
+			)
+			if exitCode != 2 || !strings.Contains(stderr.String(), option+" requires a value") {
+				t.Fatalf("expected missing value error for %s, got %d and %q", option, exitCode, stderr.String())
+			}
+		})
+	}
+}
+
 func TestWorkspaceReportsKubectlFailure(t *testing.T) {
 	deps := workspaceTestDependencies(func(string, []string, io.Writer, io.Writer) error {
 		return errors.New("command failed")

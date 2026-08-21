@@ -216,12 +216,22 @@ done
 repository_root="$(
   git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel
 )"
-repository_commit="$(git -C "$repository_root" rev-parse HEAD)"
+repository_ref="$(git -C "$repository_root" symbolic-ref --quiet HEAD || true)"
+if [[ -z "$repository_ref" ]]; then
+  repository_ref="$(
+    git -C "$repository_root" for-each-ref \
+      --points-at HEAD \
+      --format='%(refname)' \
+      refs/heads refs/tags refs/remotes | sed -n '1p'
+  )"
+fi
+[[ -n "$repository_ref" ]] || fail "PAW source HEAD is not reachable from an explicit named ref"
+repository_commit="$(git -C "$repository_root" rev-parse --verify "$repository_ref^{commit}")"
 "$paw_binary" workspace repository add \
   --adapter minikube \
   --context "$context" \
   --source "$repository_root" \
-  --revision HEAD \
+  --revision "$repository_ref" \
   --name paw-conformance >/dev/null
 
 # The single-quoted script expands only inside the workspace shell.
@@ -240,7 +250,7 @@ if "$paw_binary" workspace repository add \
   --adapter minikube \
   --context "$context" \
   --source "$repository_root" \
-  --revision HEAD \
+  --revision "$repository_ref" \
   --name paw-conformance >/dev/null 2>&1; then
   fail "repository materialization replaced an existing destination"
 fi

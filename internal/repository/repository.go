@@ -23,6 +23,7 @@ type Request struct {
 
 type selection struct {
 	commit string
+	object string
 	ref    string
 	source string
 }
@@ -49,7 +50,7 @@ func Add(request Request, stdout, stderr io.Writer) error {
 		"--namespace", "paw-workspace",
 		"exec", "--stdin", "workspace-0", "--",
 		"sh", "-ceu", materializeScript,
-		"paw-repository", request.Name, selected.commit,
+		"paw-repository", request.Name, selected.ref, selected.object, selected.commit,
 	)
 
 	reader, writer := io.Pipe()
@@ -80,14 +81,18 @@ func Add(request Request, stdout, stderr io.Writer) error {
 	kubectlErr := kubectl.Wait()
 	_ = reader.Close()
 	bundleErr := <-bundleDone
-	if bundleErr != nil {
-		return fmt.Errorf("create Git bundle: %w", bundleErr)
-	}
+	return finishAdd(request.Name, selected.commit, kubectlErr, bundleErr, stdout)
+}
+
+func finishAdd(name, commit string, kubectlErr, bundleErr error, stdout io.Writer) error {
 	if kubectlErr != nil {
 		return fmt.Errorf("materialize repository in workspace: %w", kubectlErr)
 	}
+	if bundleErr != nil {
+		return fmt.Errorf("create Git bundle: %w", bundleErr)
+	}
 
-	fmt.Fprintf(stdout, "repository %s materialized at %s\n", request.Name, selected.commit)
+	fmt.Fprintf(stdout, "repository %s materialized at %s\n", name, commit)
 	return nil
 }
 
@@ -95,7 +100,8 @@ func resolve(source, revision string) (selection, error) {
 	if source == "" {
 		return selection{}, fmt.Errorf("repository source must not be empty")
 	}
-	if revision == "" || strings.HasPrefix(revision, "-") {
+	if revision == "" || revision == "HEAD" || revision == "@" ||
+		strings.HasPrefix(revision, "-") {
 		return selection{}, fmt.Errorf("repository revision must be an explicit named ref")
 	}
 
@@ -124,6 +130,13 @@ func resolve(source, revision string) (selection, error) {
 	if err != nil || !allowedRef(ref) {
 		return selection{}, fmt.Errorf("revision must resolve to a branch, tag, or remote-tracking ref")
 	}
+	object, err := gitOutput(
+		canonical,
+		"rev-parse", "--verify", "--end-of-options", ref+"^{object}",
+	)
+	if err != nil {
+		return selection{}, fmt.Errorf("resolve repository ref object: %w", err)
+	}
 	commit, err := gitOutput(
 		canonical,
 		"rev-parse", "--verify", "--end-of-options", ref+"^{commit}",
@@ -132,7 +145,7 @@ func resolve(source, revision string) (selection, error) {
 		return selection{}, fmt.Errorf("resolve repository revision: %w", err)
 	}
 
-	return selection{source: canonical, ref: ref, commit: commit}, nil
+	return selection{source: canonical, ref: ref, object: object, commit: commit}, nil
 }
 
 func allowedRef(ref string) bool {
@@ -152,16 +165,31 @@ func gitOutput(source string, args ...string) (string, error) {
 
 const materializeScript = `
 name="$1"
-commit="$2"
+ref="$2"
+object="$3"
+commit="$4"
 destination="/workspace/work/$name"
-test ! -e "$destination"
+if test -e "$destination"; then
+  echo "repository destination $destination already exists" >&2
+  exit 1
+fi
 bundle_file="$(mktemp /tmp/paw-repository.XXXXXX)"
 staging_root="$(mktemp -d /workspace/work/.paw-repository.XXXXXX)"
 staging="$staging_root/repository"
 trap 'rm -f -- "$bundle_file"; rm -rf -- "$staging_root"' EXIT
 cat >"$bundle_file"
-git -c init.defaultBranch=paw-detached clone --quiet --no-checkout "$bundle_file" "$staging"
+bundle_heads="$(git bundle list-heads "$bundle_file")"
+if test "$bundle_heads" != "$object $ref"; then
+  echo "repository bundle does not match selected ref $ref at $object" >&2
+  exit 1
+fi
+git -c init.defaultBranch=paw-detached init --quiet "$staging"
+git -C "$staging" bundle unbundle "$bundle_file" >/dev/null
+test "$(git -C "$staging" rev-parse --verify "$object^{commit}")" = "$commit"
 git -C "$staging" checkout --quiet --detach "$commit"
-git -C "$staging" remote remove origin
-mv "$staging" "$destination"
+mv --no-clobber -T "$staging" "$destination"
+if test -e "$staging"; then
+  echo "repository destination $destination appeared during materialization" >&2
+  exit 1
+fi
 `

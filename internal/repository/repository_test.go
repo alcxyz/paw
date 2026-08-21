@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +14,7 @@ func TestResolveSelectsNamedCommittedRef(t *testing.T) {
 	repositoryPath := newTestRepository(t)
 	commit := gitTestOutput(t, repositoryPath, "rev-parse", "HEAD")
 
-	selected, err := resolve(repositoryPath, "HEAD")
+	selected, err := resolve(repositoryPath, "refs/heads/main")
 	if err != nil {
 		t.Fatalf("resolve repository: %v", err)
 	}
@@ -26,21 +27,52 @@ func TestResolveSelectsNamedCommittedRef(t *testing.T) {
 	if selected.commit != commit {
 		t.Fatalf("expected commit %q, got %q", commit, selected.commit)
 	}
+	if selected.object != commit {
+		t.Fatalf("expected branch object %q, got %q", commit, selected.object)
+	}
 }
 
-func TestResolveRejectsSubdirectoryAndRawCommit(t *testing.T) {
+func TestResolvePreservesAnnotatedTagObjectAndPeeledCommit(t *testing.T) {
+	repositoryPath := newTestRepository(t)
+	gitTestRun(
+		t,
+		repositoryPath,
+		"-c", "user.name=PAW test",
+		"-c", "user.email=paw-test.invalid",
+		"tag", "--annotate", "release", "--message=release",
+	)
+
+	selected, err := resolve(repositoryPath, "refs/tags/release")
+	if err != nil {
+		t.Fatalf("resolve annotated tag: %v", err)
+	}
+	if selected.object == selected.commit {
+		t.Fatal("annotated tag object was not distinguished from its peeled commit")
+	}
+	if selected.ref != "refs/tags/release" {
+		t.Fatalf("unexpected ref %q", selected.ref)
+	}
+}
+
+func TestResolveRejectsSubdirectoryRawCommitAndPseudoRefs(t *testing.T) {
 	repositoryPath := newTestRepository(t)
 	child := filepath.Join(repositoryPath, "child")
 	if err := os.Mkdir(child, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolve(child, "HEAD"); err == nil || !strings.Contains(err.Error(), "root exactly") {
+	if _, err := resolve(child, "refs/heads/main"); err == nil || !strings.Contains(err.Error(), "root exactly") {
 		t.Fatalf("expected exact-root rejection, got %v", err)
 	}
 
 	commit := gitTestOutput(t, repositoryPath, "rev-parse", "HEAD")
 	if _, err := resolve(repositoryPath, commit); err == nil || !strings.Contains(err.Error(), "branch, tag") {
 		t.Fatalf("expected raw-commit rejection, got %v", err)
+	}
+	for _, pseudoRef := range []string{"HEAD", "@"} {
+		if _, err := resolve(repositoryPath, pseudoRef); err == nil ||
+			!strings.Contains(err.Error(), "explicit named ref") {
+			t.Fatalf("expected %s rejection, got %v", pseudoRef, err)
+		}
 	}
 }
 
@@ -51,12 +83,23 @@ func TestAddRejectsUnsafeDestinationNameBeforeExecution(t *testing.T) {
 	}
 }
 
-func TestMaterializationRemovesRemoteAndUsesAtomicDestination(t *testing.T) {
+func TestFinishAddPrefersWorkspaceFailureOverBundlePipeFailure(t *testing.T) {
+	kubectlErr := errors.New("destination already exists")
+	bundleErr := errors.New("broken pipe")
+	err := finishAdd("selected", "commit", kubectlErr, bundleErr, &bytes.Buffer{})
+	if !errors.Is(err, kubectlErr) || errors.Is(err, bundleErr) {
+		t.Fatalf("expected workspace materialization error, got %v", err)
+	}
+}
+
+func TestMaterializationUsesVerifiedBundleAndAtomicDestination(t *testing.T) {
 	for _, required := range []string{
 		"mktemp -d /workspace/work/.paw-repository.",
+		"bundle list-heads",
+		"bundle unbundle",
 		"checkout --quiet --detach",
-		"remote remove origin",
-		"mv \"$staging\" \"$destination\"",
+		"mv --no-clobber -T \"$staging\" \"$destination\"",
+		"destination $destination appeared during materialization",
 	} {
 		if !strings.Contains(materializeScript, required) {
 			t.Fatalf("materialization script is missing %q", required)

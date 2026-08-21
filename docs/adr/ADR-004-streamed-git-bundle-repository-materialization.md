@@ -33,14 +33,19 @@ For the initial local adapter:
 
 - `PATH` must be the canonical root of one Git worktree, not a parent,
   subdirectory, organization checkout, or implicit current directory;
-- `REF` must resolve to a local branch, tag, or remote-tracking ref;
-- PAW resolves the ref to an exact commit before transfer;
+- `REF` must resolve to a local branch, tag, or remote-tracking ref; moving
+  pseudo-refs such as `HEAD` and `@` are rejected;
+- PAW resolves the ref to both its exact advertised object and peeled commit
+  before transfer;
 - Git writes a bundle to stdout and PAW streams it directly to `kubectl exec`
   stdin, without a host temporary archive;
-- the pod receives the stream in its isolated `/tmp`, clones into an atomic
-  staging directory, checks out the resolved commit in detached mode, removes
-  the bundle remote, and moves the result under `/workspace/work/NAME`; and
-- materialization refuses to replace an existing destination.
+- the pod receives the stream in its isolated `/tmp`, verifies that the bundle
+  advertises exactly the selected ref at the selected object, imports it into
+  an atomic staging directory without creating a remote, verifies and checks
+  out the peeled commit in detached mode, and moves the result under
+  `/workspace/work/NAME`; and
+- materialization uses a no-clobber final rename and refuses to replace an
+  existing destination, including one created concurrently.
 
 The bundle includes committed objects reachable from the selected ref. It does
 not include the host worktree's uncommitted files, Git configuration, credential
@@ -76,9 +81,17 @@ modify its Kubernetes policy.
 - A full bundle may transfer more history than a shallow clone.
 - Only committed named refs are supported initially; dirty worktrees and raw
   object IDs are rejected.
+- Git submodules are transferred only as gitlink entries; their repositories
+  and working trees are not materialized.
+- Git LFS objects are not transferred; only committed LFS pointer files are
+  present unless a future adapter explicitly supports LFS.
+- The initial stream has no configurable deadline or resume support. Process
+  failures are reported and pod-side staging is cleaned, but an interrupted or
+  slow transfer must be retried from the beginning.
 - The first command is operator-driven and does not yet model reusable
   multi-repository bundles in workspace metadata.
-- The pod briefly stores the bundle in isolated ephemeral `/tmp` while cloning.
+- The pod briefly stores the bundle in isolated ephemeral `/tmp` while
+  importing it.
 
 ## Validation
 

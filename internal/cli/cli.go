@@ -236,16 +236,17 @@ func runWorkspaceRepository(args []string, stdout, stderr io.Writer, deps depend
 		"--source":   &source,
 	}
 	for index := 1; index < len(args); index++ {
-		target, exists := values[args[index]]
+		option := args[index]
+		target, exists := values[option]
 		if !exists {
-			return usageError(stderr, fmt.Sprintf("unknown repository option %q", args[index]))
+			return usageError(stderr, fmt.Sprintf("unknown repository option %q", option))
 		}
 		index++
-		if index == len(args) || args[index] == "" {
-			return usageError(stderr, fmt.Sprintf("%s requires a value", args[index-1]))
+		if optionValueMissing(args, index) {
+			return usageError(stderr, fmt.Sprintf("%s requires a value", option))
 		}
 		if *target != "" {
-			return usageError(stderr, fmt.Sprintf("%s may only be specified once", args[index-1]))
+			return usageError(stderr, fmt.Sprintf("%s may only be specified once", option))
 		}
 		*target = args[index]
 	}
