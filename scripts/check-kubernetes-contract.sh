@@ -19,11 +19,16 @@ assert_security_contract() {
       .securityContext.readOnlyRootFilesystem == true and
       (.securityContext.capabilities.drop | index("ALL")) != null and
       ((.securityContext.capabilities.add // []) | length) == 0) and
+    all($containers[];
+      all(.env[]?;
+        .name == "HOME" or .name == "TMPDIR" or
+        .name == "XDG_CACHE_HOME" or .name == "XDG_CONFIG_HOME" or
+        .name == "XDG_DATA_HOME")) and
     ([.. | objects | select(has("hostPath"))] | length) == 0 and
     ([.. | objects | select(has("secretKeyRef") or has("secretRef") or
       has("serviceAccountToken"))] | length) == 0 and
     ([.. | objects | select(has("volumes")) | .volumes[]? |
-      select(has("secret"))] | length) == 0 and
+      select(has("secret") or has("csi"))] | length) == 0 and
     ([.. | objects | select(has("projected")) | .projected.sources[]? |
       select(has("secret"))] | length) == 0 and
     ([.. | objects | select(has("envFrom"))] | length) == 0 and
@@ -34,10 +39,6 @@ assert_security_contract() {
     ([.. | objects | select(has("volumeDevices"))] | length) == 0 and
     ([.. | objects | select(has("sysctls"))] | length) == 0 and
     ([.. | objects | select(has("hostAliases"))] | length) == 0 and
-    ([.. | objects | select(has("env")) | .env[]? |
-      select(.name | test(
-        "(TOKEN|SECRET|PASSWORD|CREDENTIAL|ACCESS_KEY|PRIVATE_KEY|API_?KEY|BEARER|PASSPHRASE)";
-        "i"))] | length) == 0 and
     ([.. | strings | select(test(
       "(docker\\.sock|containerd\\.sock|podman\\.sock|/var/run/docker|/run/containerd)";
       "i"))] | length) == 0
@@ -143,11 +144,21 @@ jq 'map(if .kind == "StatefulSet" then
 expect_security_rejection "a projected secret" "$check_dir/projected-secret.json"
 
 jq 'map(if .kind == "StatefulSet" then
-  .spec.template.spec.containers[0].env +=
-  [{"name":"API_KEY","value":"forbidden"}]
+  .spec.template.spec.volumes +=
+  [{"name":"forbidden-csi","csi":{
+    "driver":"secrets-store.csi.k8s.io",
+    "volumeAttributes":{"secretProviderClass":"forbidden"}
+  }}]
   else . end)' \
-  "$check_dir/base.json" >"$check_dir/api-key.json"
-expect_security_rejection "an API_KEY environment variable" "$check_dir/api-key.json"
+  "$check_dir/base.json" >"$check_dir/csi-volume.json"
+expect_security_rejection "a CSI volume" "$check_dir/csi-volume.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.containers[0].env +=
+  [{"name":"GH_PAT","value":"forbidden"}]
+  else . end)' \
+  "$check_dir/base.json" >"$check_dir/credential-env.json"
+expect_security_rejection "an undeclared environment variable" "$check_dir/credential-env.json"
 
 jq 'map(if .kind == "StatefulSet" then
   .spec.template.spec.initContainers = [{
