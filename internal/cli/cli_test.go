@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	deployment "git.alc.xyz/alcxyz/paw/deploy"
 )
 
 func TestVersion(t *testing.T) {
@@ -166,7 +168,12 @@ func TestWorkspaceRender(t *testing.T) {
 	})
 
 	exitCode := runWithDependencies(
-		[]string{"workspace", "render", "--adapter", "minikube"},
+		[]string{
+			"workspace", "render",
+			"--adapter", "minikube",
+			"--profile", "core",
+			"--provider", "codex",
+		},
 		&stdout,
 		&bytes.Buffer{},
 		deps,
@@ -186,7 +193,12 @@ func TestWorkspaceRender(t *testing.T) {
 func TestWorkspaceCreateRequiresExplicitContext(t *testing.T) {
 	var stderr bytes.Buffer
 	exitCode := runWithDependencies(
-		[]string{"workspace", "create", "--adapter", "minikube"},
+		[]string{
+			"workspace", "create",
+			"--adapter", "minikube",
+			"--profile", "core",
+			"--provider", "none",
+		},
 		&bytes.Buffer{},
 		&stderr,
 		workspaceTestDependencies(nil),
@@ -199,13 +211,24 @@ func TestWorkspaceCreateRequiresExplicitContext(t *testing.T) {
 
 func TestWorkspaceCreateUsesSelectedContext(t *testing.T) {
 	var commandArgs []string
+	var selection deployment.Selection
 	deps := workspaceTestDependencies(func(_ string, args []string, _, _ io.Writer) error {
 		commandArgs = slices.Clone(args)
 		return nil
 	})
+	deps.materialize = func(_ string, actual deployment.Selection) (string, func(), error) {
+		selection = actual
+		return "/manifests/minikube", func() {}, nil
+	}
 
 	exitCode := runWithDependencies(
-		[]string{"workspace", "create", "--adapter", "minikube", "--context", "minikube"},
+		[]string{
+			"workspace", "create",
+			"--adapter", "minikube",
+			"--context", "minikube",
+			"--profile", "platform-readonly",
+			"--provider", "opencode",
+		},
 		&bytes.Buffer{},
 		&bytes.Buffer{},
 		deps,
@@ -214,6 +237,46 @@ func TestWorkspaceCreateUsesSelectedContext(t *testing.T) {
 	expected := []string{"--context", "minikube", "apply", "-k", "/manifests/minikube"}
 	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
 		t.Fatalf("unexpected create result: exit=%d args=%v", exitCode, commandArgs)
+	}
+	if selection != (deployment.Selection{Profile: "platform-readonly", Provider: "opencode"}) {
+		t.Fatalf("unexpected selection: %#v", selection)
+	}
+}
+
+func TestWorkspaceRenderRequiresExplicitSelection(t *testing.T) {
+	for _, args := range [][]string{
+		{"workspace", "render", "--adapter", "minikube", "--provider", "none"},
+		{"workspace", "render", "--adapter", "minikube", "--profile", "core"},
+	} {
+		var stderr bytes.Buffer
+		exitCode := runWithDependencies(
+			args,
+			&bytes.Buffer{},
+			&stderr,
+			workspaceTestDependencies(nil),
+		)
+		if exitCode != 2 || !strings.Contains(stderr.String(), "require") {
+			t.Fatalf("expected selection usage error, got %d and %q", exitCode, stderr.String())
+		}
+	}
+}
+
+func TestWorkspaceRejectsUnknownSelection(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "render",
+			"--adapter", "minikube",
+			"--profile", "production",
+			"--provider", "codex",
+		},
+		&bytes.Buffer{},
+		&stderr,
+		workspaceTestDependencies(nil),
+	)
+
+	if exitCode != 2 || !strings.Contains(stderr.String(), "unsupported profile/provider") {
+		t.Fatalf("expected selection usage error, got %d and %q", exitCode, stderr.String())
 	}
 }
 
@@ -267,7 +330,12 @@ func TestWorkspaceReportsKubectlFailure(t *testing.T) {
 	var stderr bytes.Buffer
 
 	exitCode := runWithDependencies(
-		[]string{"workspace", "render", "--adapter", "minikube"},
+		[]string{
+			"workspace", "render",
+			"--adapter", "minikube",
+			"--profile", "core",
+			"--provider", "none",
+		},
 		&bytes.Buffer{},
 		&stderr,
 		deps,
@@ -287,7 +355,7 @@ func workspaceTestDependencies(runner commandRunner) dependencies {
 	return dependencies{
 		lookPath:   alwaysAvailable,
 		runCommand: runner,
-		materialize: func(adapter string) (string, func(), error) {
+		materialize: func(adapter string, _ deployment.Selection) (string, func(), error) {
 			if adapter != "minikube" {
 				return "", func() {}, fmt.Errorf("unsupported adapter %q", adapter)
 			}

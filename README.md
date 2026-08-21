@@ -66,8 +66,9 @@ paw doctor
 paw profile list
 paw profile show platform-readonly
 paw profile show platform-readonly --json
-paw workspace render --adapter minikube
-paw workspace create --adapter minikube --context minikube
+paw workspace render --adapter minikube --profile core --provider codex
+paw workspace create --adapter minikube --context minikube \
+  --profile platform-readonly --provider opencode
 paw workspace destroy --adapter minikube --context minikube --delete-state
 ```
 

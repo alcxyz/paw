@@ -8,6 +8,7 @@ metadata:
   annotations:
     paw.alc.xyz/contract-version: v0
     paw.alc.xyz/profile: core
+    paw.alc.xyz/provider: none
     paw.alc.xyz/single-writer: "true"
 spec:
   replicas: 1
@@ -24,6 +25,7 @@ spec:
       annotations:
         paw.alc.xyz/contract-version: v0
         paw.alc.xyz/profile: core
+        paw.alc.xyz/provider: none
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
