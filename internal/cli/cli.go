@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"os/signal"
 	"slices"
 	"strconv"
+	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -306,7 +310,7 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 		switch args[index] {
 		case "--adapter":
 			index++
-			if index == len(args) || args[index] == "" {
+			if optionValueMissing(args, index) {
 				return workspaceOptions{}, fmt.Errorf("--adapter requires a value")
 			}
 			if result.adapter != "" {
@@ -315,7 +319,7 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 			result.adapter = args[index]
 		case "--context":
 			index++
-			if index == len(args) || args[index] == "" {
+			if optionValueMissing(args, index) {
 				return workspaceOptions{}, fmt.Errorf("--context requires a value")
 			}
 			if result.context != "" {
@@ -334,7 +338,7 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 			result.jsonOutput = true
 		case "--label":
 			index++
-			if index == len(args) || args[index] == "" {
+			if optionValueMissing(args, index) {
 				return workspaceOptions{}, fmt.Errorf("--label requires a value")
 			}
 			if result.label != "" {
@@ -343,7 +347,7 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 			result.label = args[index]
 		case "--local-port":
 			index++
-			if index == len(args) || args[index] == "" {
+			if optionValueMissing(args, index) {
 				return workspaceOptions{}, fmt.Errorf("--local-port requires a value")
 			}
 			if result.localPort != 0 {
@@ -356,7 +360,7 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 			result.localPort = port
 		case "--pairing-id":
 			index++
-			if index == len(args) || args[index] == "" {
+			if optionValueMissing(args, index) {
 				return workspaceOptions{}, fmt.Errorf("--pairing-id requires a value")
 			}
 			if result.pairingID != "" {
@@ -365,7 +369,7 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 			result.pairingID = args[index]
 		case "--profile":
 			index++
-			if index == len(args) || args[index] == "" {
+			if optionValueMissing(args, index) {
 				return workspaceOptions{}, fmt.Errorf("--profile requires a value")
 			}
 			if result.profile != "" {
@@ -374,7 +378,7 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 			result.profile = args[index]
 		case "--provider":
 			index++
-			if index == len(args) || args[index] == "" {
+			if optionValueMissing(args, index) {
 				return workspaceOptions{}, fmt.Errorf("--provider requires a value")
 			}
 			if result.provider != "" {
@@ -383,7 +387,7 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 			result.provider = args[index]
 		case "--ttl":
 			index++
-			if index == len(args) || args[index] == "" {
+			if optionValueMissing(args, index) {
 				return workspaceOptions{}, fmt.Errorf("--ttl requires a value")
 			}
 			if result.ttl != "" {
@@ -395,6 +399,10 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 		}
 	}
 	return result, nil
+}
+
+func optionValueMissing(args []string, index int) bool {
+	return index == len(args) || args[index] == "" || strings.HasPrefix(args[index], "--")
 }
 
 func workspaceUsage() string {
@@ -409,10 +417,41 @@ func workspaceUsage() string {
 }
 
 func executeCommand(name string, args []string, stdout, stderr io.Writer) error {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	return executeCommandWithSignals(name, args, stdout, stderr, signals)
+}
+
+func executeCommandWithSignals(
+	name string,
+	args []string,
+	stdout, stderr io.Writer,
+	signals <-chan os.Signal,
+) error {
 	command := exec.Command(name, args...)
 	command.Stdout = stdout
 	command.Stderr = stderr
-	return command.Run()
+	if err := command.Start(); err != nil {
+		return err
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- command.Wait()
+	}()
+
+	for {
+		select {
+		case err := <-done:
+			return err
+		case received := <-signals:
+			if received != nil {
+				_ = command.Process.Signal(received)
+			}
+		}
+	}
 }
 
 func usageError(stderr io.Writer, message string) int {

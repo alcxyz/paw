@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	deployment "git.alc.xyz/alcxyz/paw/deploy"
@@ -516,6 +520,56 @@ func TestWorkspaceRejectsOperatorFlagsOnWrongOperation(t *testing.T) {
 
 	if exitCode != 2 || !strings.Contains(stderr.String(), "--json is only valid") {
 		t.Fatalf("expected scoped option error, got %d and %q", exitCode, stderr.String())
+	}
+}
+
+func TestWorkspaceOptionsDoNotConsumeAnotherFlagAsAValue(t *testing.T) {
+	for _, option := range []string{
+		"--adapter",
+		"--context",
+		"--label",
+		"--local-port",
+		"--pairing-id",
+		"--profile",
+		"--provider",
+		"--ttl",
+	} {
+		t.Run(option, func(t *testing.T) {
+			_, err := parseWorkspaceOptions([]string{option, "--json"})
+			if err == nil || !strings.Contains(err.Error(), option+" requires a value") {
+				t.Fatalf("expected missing value error for %s, got %v", option, err)
+			}
+		})
+	}
+}
+
+func TestExecuteCommandForwardsTerminationSignal(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	defer stdoutReader.Close()
+
+	signals := make(chan os.Signal, 1)
+	ready := make(chan struct{})
+	go func() {
+		scanner := bufio.NewScanner(stdoutReader)
+		if scanner.Scan() && scanner.Text() == "ready" {
+			close(ready)
+			signals <- syscall.SIGTERM
+		}
+	}()
+
+	err := executeCommandWithSignals(
+		"sh",
+		[]string{"-c", "trap 'exit 42' TERM; echo ready; while :; do :; done"},
+		stdoutWriter,
+		io.Discard,
+		signals,
+	)
+	_ = stdoutWriter.Close()
+	<-ready
+
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) || exitError.ExitCode() != 42 {
+		t.Fatalf("expected forwarded SIGTERM to trigger exit 42, got %v", err)
 	}
 }
 
