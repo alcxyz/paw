@@ -109,6 +109,9 @@ permissions. The first planned profiles are:
 
 A capability declares its packages, repository access, mounts, network policy,
 identity requirements, RBAC, approval points, agent instructions, and tests.
+The versioned [v0 capability contract](contract/v0.json) defines the initial
+authority ceilings, trust boundaries, adapter requirements, and invariants in a
+form shared by the Go CLI, Nix profiles, and deployment checks.
 
 ## Provider model
 
@@ -148,18 +151,20 @@ are:
 
 ```text
 cmd/paw/              Go CLI entry point
+contract/             Versioned machine-readable capability contracts
 internal/             CLI and adapter implementation
 nix/modules/          PAW build-time modules
 nix/profiles/         Composed workspace profiles
 deploy/base/          Portable Kubernetes resources
 deploy/adapters/      Environment-specific adapters
-docs/adr/             Architecture decisions
+docs/adr/             Architecture decisions and threat model
 ```
 
 Start with:
 
 - [ADR-001: Kubernetes-native collaborative AI workspaces](docs/adr/ADR-001-kubernetes-native-collaborative-ai-workspaces.md)
 - [ADR-002: Go CLI and Nix flake build architecture](docs/adr/ADR-002-go-cli-and-nix-flake-build-architecture.md)
+- [ADR-003: PAW v0 capability contract and threat model](docs/adr/ADR-003-v0-capability-contract-and-threat-model.md)
 
 ## Development
 
