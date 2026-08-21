@@ -2,8 +2,8 @@
 set -euo pipefail
 
 repo_root=${1:-.}
-check_dir=${TMPDIR:?}/paw-kubernetes-contract
-mkdir -p "$check_dir"
+check_dir=$(mktemp -d "${TMPDIR:-/tmp}/paw-kubernetes-contract.XXXXXX")
+trap 'rm -rf -- "$check_dir"' EXIT
 
 kubectl kustomize "$repo_root/deploy/base" >"$check_dir/base.yaml"
 kubectl kustomize "$repo_root/deploy/adapters/minikube" >"$check_dir/minikube.yaml"
