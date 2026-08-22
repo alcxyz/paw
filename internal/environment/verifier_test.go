@@ -26,6 +26,8 @@ type probeRunner struct {
 	cleanupFailure     bool
 	namespaceCreated   bool
 	namespaceCreateErr bool
+	readinessTimeout   bool
+	readinessCanceled  bool
 }
 
 func (r *probeRunner) run(
@@ -70,6 +72,12 @@ func (r *probeRunner) run(
 	case strings.Contains(input, "kind: Pod"):
 		return commandResult{}, nil
 	case strings.Contains(joined, "wait --for=condition=Ready"):
+		if r.readinessTimeout {
+			return commandResult{}, context.DeadlineExceeded
+		}
+		if r.readinessCanceled {
+			return commandResult{}, context.Canceled
+		}
 		return commandResult{}, nil
 	case strings.Contains(joined, "get pod egress-target"):
 		return commandResult{stdout: "10.0.0.10"}, nil
@@ -183,6 +191,39 @@ func TestVerifyTreatsFailedPositiveControlAsInconclusive(t *testing.T) {
 	}
 	if !runner.deletedNamespace() {
 		t.Fatal("probe namespace was not deleted")
+	}
+}
+
+func TestVerifyTreatsReadinessTimeoutAsInconclusiveAndCleansUp(t *testing.T) {
+	runner := &probeRunner{readinessTimeout: true}
+	report, err := testVerifier(runner).verify(
+		context.Background(),
+		Request{Context: "test-context"},
+	)
+	if err != nil {
+		t.Fatalf("readiness timeout should be reported, got error: %v", err)
+	}
+	if report.Outcome != OutcomeInconclusive ||
+		!hasCheck(report, "probe-readiness", StatusInconclusive) {
+		t.Fatalf("expected inconclusive readiness timeout: %#v", report)
+	}
+	if !runner.deletedNamespace() || !hasCheck(report, "cleanup", StatusPass) {
+		t.Fatalf("timed-out probe namespace was not cleaned: %#v", report.Checks)
+	}
+}
+
+func TestVerifyUsesIndependentCleanupAfterInterruption(t *testing.T) {
+	runner := &probeRunner{readinessCanceled: true}
+	report, err := testVerifier(runner).verify(
+		context.Background(),
+		Request{Context: "test-context"},
+	)
+	if err != nil {
+		t.Fatalf("interrupted readiness should be reported, got error: %v", err)
+	}
+	if report.Outcome != OutcomeInconclusive || !runner.deletedNamespace() ||
+		!hasCheck(report, "cleanup", StatusPass) {
+		t.Fatalf("interrupted run did not clean up independently: %#v", report)
 	}
 }
 
