@@ -64,6 +64,8 @@ The initial foundation provides:
 ```text
 paw version
 paw doctor
+paw environment verify --context minikube
+paw environment verify --context minikube --json
 paw profile list
 paw profile show platform-readonly
 paw profile show platform-readonly --json
@@ -99,6 +101,14 @@ paw workspace destroy --adapter kubernetes --context paw-k3s --delete-state
 `registry.example/team/paw-codex@sha256:…`; tags and profile/provider image-name
 mismatches are rejected. The `minikube` compatibility adapter selects the
 reviewed local `:dev` image and does not accept `--image-ref`.
+
+Before creating a workspace, `paw environment verify --context CONTEXT` creates
+one uniquely named restricted namespace and uses only in-cluster endpoints to
+prove positive connectivity plus default-deny ingress and egress. It deletes
+that namespace on pass, failure, interruption, or an inconclusive positive
+control. The command returns nonzero unless every check and cleanup passes;
+`--json` emits the versioned, credential-free evidence record. It never inspects
+or changes the cluster networking implementation.
 
 The local connection command holds an operator-controlled port-forward on
 `127.0.0.1:3773`; it never binds an ambient LAN interface. While that command is
@@ -282,10 +292,20 @@ PVC Kubernetes objects. Backing PV and storage reclamation remain
 storage-adapter requirements and are not claimed by this check. Pairing
 credentials pass directly from `paw` to `jq` and are never stored or printed.
 
-This Minikube script is the first reference check, not the portable environment
-contract. The planned generic verifier will use in-cluster positive and negative
-controls to prove ingress and egress enforcement without relying on the reported
-CNI name, then exercise the same contract on K3s and non-production AKS.
+This Minikube script is the first complete workspace reference check. The
+portable environment contract is exercised independently with:
+
+```sh
+paw environment verify --context CONTEXT
+paw environment verify --context CONTEXT --json
+```
+
+The verifier pins the Kubernetes `agnhost` probe image, uses no external test
+destination, proves each path before applying policy, and then requires
+independent ingress and egress denial. A broken positive control is
+inconclusive, not evidence of enforcement. The same command is the qualification
+boundary for Minikube, K3s, non-production AKS, and the required non-enforcing
+negative lane.
 
 Inspect the evaluated, machine-readable profile contract:
 

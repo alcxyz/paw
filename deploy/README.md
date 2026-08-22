@@ -102,3 +102,13 @@ reclamation. The target cluster must use a CNI that enforces NetworkPolicy and
 must already contain the selected development image. The current script uses
 Minikube as a reference environment; it does not make Minikube or its selected
 network-policy implementation part of the portable deployment contract.
+
+`paw environment verify --context CONTEXT` is the portable preflight for that
+contract. It creates only a randomly named restricted namespace, proves the
+future selected ingress and egress paths before policy, applies standard
+`networking.k8s.io/v1` default-deny probes, and requires both paths to become
+unreachable. It uses a digest-pinned Kubernetes `agnhost` image and direct pod
+addresses, so the result does not depend on public endpoints or cluster DNS.
+The namespace is deleted with a separate bounded cleanup context even when the
+main run is interrupted. A nonzero result means the environment is not
+qualified; it must not be converted into a warning or unrestricted fallback.

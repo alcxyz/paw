@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	deployment "git.alc.xyz/alcxyz/paw/deploy"
 	"git.alc.xyz/alcxyz/paw/internal/buildinfo"
+	"git.alc.xyz/alcxyz/paw/internal/environment"
 	"git.alc.xyz/alcxyz/paw/internal/profile"
 	"git.alc.xyz/alcxyz/paw/internal/repository"
 )
@@ -24,12 +26,14 @@ type pathLookup func(string) (string, error)
 type commandRunner func(string, []string, io.Writer, io.Writer) error
 type manifestMaterializer func(deployment.ManifestRequest) (string, func(), error)
 type repositoryAdder func(repository.Request, io.Writer, io.Writer) error
+type environmentVerifier func(context.Context, environment.Request) (environment.Report, error)
 
 type dependencies struct {
 	lookPath    pathLookup
 	runCommand  commandRunner
 	materialize manifestMaterializer
 	addRepo     repositoryAdder
+	verifyEnv   environmentVerifier
 }
 
 // Run executes the PAW CLI and returns a process exit code.
@@ -43,6 +47,7 @@ func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
 		runCommand:  executeCommand,
 		materialize: deployment.MaterializeManifest,
 		addRepo:     repository.Add,
+		verifyEnv:   environment.Verify,
 	})
 }
 
@@ -79,6 +84,8 @@ func runWithDependencies(args []string, stdout, stderr io.Writer, deps dependenc
 			return printProfile(args[2], true, stdout, stderr)
 		}
 		return usageError(stderr, "usage: paw profile list | paw profile show NAME [--json]")
+	case "environment":
+		return runEnvironment(args[1:], stdout, stderr, deps)
 	case "workspace":
 		return runWorkspace(args[1:], stdout, stderr, deps)
 	default:
@@ -94,10 +101,69 @@ Usage:
 
 Commands:
   doctor        Inspect local PAW dependencies
+  environment   Verify a selected runtime environment
   profile       List or inspect built-in workspace profiles
   workspace     Render and operate a workspace
   version       Print build version information
   help          Show this help`)
+}
+
+func runEnvironment(args []string, stdout, stderr io.Writer, deps dependencies) int {
+	if len(args) == 0 || args[0] != "verify" {
+		return usageError(stderr, environmentUsage())
+	}
+
+	var contextName string
+	jsonOutput := false
+	for index := 1; index < len(args); index++ {
+		switch args[index] {
+		case "--context":
+			index++
+			if optionValueMissing(args, index) {
+				return usageError(stderr, "--context requires a value")
+			}
+			if contextName != "" {
+				return usageError(stderr, "--context may only be specified once")
+			}
+			contextName = args[index]
+		case "--json":
+			if jsonOutput {
+				return usageError(stderr, "--json may only be specified once")
+			}
+			jsonOutput = true
+		default:
+			return usageError(stderr, fmt.Sprintf("unknown environment option %q", args[index]))
+		}
+	}
+	if contextName == "" {
+		return usageError(stderr, "environment verify requires --context")
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	report, verifyErr := deps.verifyEnv(ctx, environment.Request{Context: contextName})
+	var outputErr error
+	if jsonOutput {
+		outputErr = environment.WriteJSON(stdout, report)
+	} else {
+		outputErr = environment.WriteText(stdout, report)
+	}
+	if outputErr != nil {
+		fmt.Fprintf(stderr, "paw: write environment verification: %v\n", outputErr)
+		return 1
+	}
+	if verifyErr != nil {
+		fmt.Fprintf(stderr, "paw: environment verification: %v\n", verifyErr)
+		return 1
+	}
+	if report.Outcome != environment.OutcomePass {
+		return 1
+	}
+	return 0
+}
+
+func environmentUsage() string {
+	return "usage: paw environment verify --context CONTEXT [--json]"
 }
 
 type workspaceOptions struct {

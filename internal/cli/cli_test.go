@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,8 +13,10 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	deployment "git.alc.xyz/alcxyz/paw/deploy"
+	"git.alc.xyz/alcxyz/paw/internal/environment"
 	"git.alc.xyz/alcxyz/paw/internal/repository"
 )
 
@@ -181,6 +184,96 @@ func TestUnknownCommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "unknown command") {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+}
+
+func TestEnvironmentVerifyPrintsPassingReport(t *testing.T) {
+	var received environment.Request
+	deps := dependencies{
+		verifyEnv: func(_ context.Context, request environment.Request) (environment.Report, error) {
+			received = request
+			return environment.Report{
+				SchemaVersion:     environment.SchemaVersion,
+				ContractVersion:   environment.ContractVersion,
+				ProbeVersion:      environment.ProbeVersion,
+				Context:           request.Context,
+				KubernetesVersion: "v1.33.7",
+				StartedAt:         time.Date(2026, 8, 22, 1, 0, 0, 0, time.UTC),
+				CompletedAt:       time.Date(2026, 8, 22, 1, 1, 0, 0, time.UTC),
+				Outcome:           environment.OutcomePass,
+				Checks: []environment.Check{{
+					Name: "default-deny-egress", Status: environment.StatusPass,
+					Message: "denied",
+				}},
+			}, nil
+		},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := runWithDependencies(
+		[]string{"environment", "verify", "--context", "paw-k3s"},
+		&stdout,
+		&stderr,
+		deps,
+	)
+
+	if exitCode != 0 || received.Context != "paw-k3s" {
+		t.Fatalf("unexpected result: exit=%d request=%#v", exitCode, received)
+	}
+	for _, expected := range []string{"OUTCOME", "pass", "paw-k3s", "v1.33.7", "default-deny-egress"} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("output lacks %q: %q", expected, stdout.String())
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+}
+
+func TestEnvironmentVerifyJSONReturnsNonzeroForInconclusive(t *testing.T) {
+	deps := dependencies{
+		verifyEnv: func(_ context.Context, request environment.Request) (environment.Report, error) {
+			return environment.Report{
+				SchemaVersion:   environment.SchemaVersion,
+				ContractVersion: environment.ContractVersion,
+				ProbeVersion:    environment.ProbeVersion,
+				Context:         request.Context,
+				StartedAt:       time.Date(2026, 8, 22, 1, 0, 0, 0, time.UTC),
+				CompletedAt:     time.Date(2026, 8, 22, 1, 1, 0, 0, time.UTC),
+				Outcome:         environment.OutcomeInconclusive,
+			}, nil
+		},
+	}
+	var stdout bytes.Buffer
+
+	exitCode := runWithDependencies(
+		[]string{"environment", "verify", "--context", "paw-k3s", "--json"},
+		&stdout,
+		&bytes.Buffer{},
+		deps,
+	)
+
+	if exitCode != 1 || !strings.Contains(stdout.String(), `"outcome": "inconclusive"`) ||
+		!strings.Contains(stdout.String(), `"context": "paw-k3s"`) {
+		t.Fatalf("unexpected JSON result: exit=%d output=%q", exitCode, stdout.String())
+	}
+}
+
+func TestEnvironmentVerifyRequiresExactOptions(t *testing.T) {
+	for _, args := range [][]string{
+		{"environment"},
+		{"environment", "verify"},
+		{"environment", "verify", "--context"},
+		{"environment", "verify", "--context", "one", "--context", "two"},
+		{"environment", "verify", "--context", "one", "--unknown"},
+		{"environment", "inspect", "--context", "one"},
+	} {
+		var stderr bytes.Buffer
+		exitCode := runWithDependencies(args, &bytes.Buffer{}, &stderr, dependencies{})
+		if exitCode != 2 || stderr.Len() == 0 {
+			t.Fatalf("expected usage failure for %v, got exit=%d stderr=%q", args, exitCode, stderr.String())
+		}
 	}
 }
 
