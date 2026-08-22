@@ -28,6 +28,7 @@ type probeRunner struct {
 	namespaceCreateErr bool
 	readinessTimeout   bool
 	readinessCanceled  bool
+	targetUnhealthy    bool
 }
 
 func (r *probeRunner) run(
@@ -80,8 +81,20 @@ func (r *probeRunner) run(
 		}
 		return commandResult{}, nil
 	case strings.Contains(joined, "get pod egress-target"):
+		if strings.Contains(joined, "containerStatuses") {
+			if r.targetUnhealthy {
+				return commandResult{stdout: "Failed:false"}, nil
+			}
+			return commandResult{stdout: "Running:true"}, nil
+		}
 		return commandResult{stdout: "10.0.0.10"}, nil
 	case strings.Contains(joined, "get pod ingress-target"):
+		if strings.Contains(joined, "containerStatuses") {
+			if r.targetUnhealthy {
+				return commandResult{stdout: "Failed:false"}, nil
+			}
+			return commandResult{stdout: "Running:true"}, nil
+		}
 		return commandResult{stdout: "10.0.0.11"}, nil
 	case strings.Contains(input, "kind: NetworkPolicy"):
 		r.policiesCreated = true
@@ -269,6 +282,24 @@ func TestVerifyDoesNotTreatKubectlFailureAsNetworkDenial(t *testing.T) {
 	}
 	if hasCheck(report, "default-deny-egress", StatusPass) {
 		t.Fatal("kubectl failure was incorrectly treated as policy enforcement")
+	}
+	if !runner.deletedNamespace() {
+		t.Fatal("probe namespace was not deleted")
+	}
+}
+
+func TestVerifyDoesNotTreatDeadTargetAsNetworkDenial(t *testing.T) {
+	runner := &probeRunner{networkEnforced: true, targetUnhealthy: true}
+	report, err := testVerifier(runner).verify(
+		context.Background(),
+		Request{Context: "test-context"},
+	)
+	if err != nil {
+		t.Fatalf("unhealthy target should be reported, got error: %v", err)
+	}
+	if report.Outcome != OutcomeInconclusive ||
+		!hasCheck(report, "target-health", StatusInconclusive) {
+		t.Fatalf("dead target was incorrectly accepted as enforcement: %#v", report)
 	}
 	if !runner.deletedNamespace() {
 		t.Fatal("probe namespace was not deleted")

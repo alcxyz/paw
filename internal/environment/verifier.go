@@ -375,6 +375,25 @@ func (v verifier) run(
 			Message: "the selected target could not be reached over the proven in-cluster path",
 		})
 	}
+	targetsHealthy, err := v.targetsHealthy(ctx, contextName, namespace)
+	if err != nil {
+		return err
+	}
+	if !targetsHealthy {
+		report.Checks = append(report.Checks, Check{
+			Name: "target-health", Status: StatusInconclusive,
+			Message: "one or more target processes stopped during policy evaluation",
+		})
+		if !isolationFailed {
+			report.Outcome = OutcomeInconclusive
+			return nil
+		}
+	} else {
+		report.Checks = append(report.Checks, Check{
+			Name: "target-health", Status: StatusPass,
+			Message: "both target processes remained running and ready",
+		})
+	}
 	if isolationFailed {
 		report.Outcome = OutcomeFail
 		return nil
@@ -499,6 +518,27 @@ func (v verifier) podIP(ctx context.Context, contextName, namespace, pod string)
 		return "", errors.New("read probe address: pod returned an invalid address")
 	}
 	return address, nil
+}
+
+func (v verifier) targetsHealthy(ctx context.Context, contextName, namespace string) (bool, error) {
+	for _, pod := range []string{"egress-target", "ingress-target"} {
+		commandCtx, cancel := context.WithTimeout(ctx, apiTimeout)
+		result, err := v.runner.run(commandCtx, "kubectl", nil,
+			"--context", contextName,
+			"--namespace", namespace,
+			"--request-timeout=8s",
+			"get", "pod", pod,
+			"--output=jsonpath={.status.phase}:{.status.containerStatuses[0].ready}",
+		)
+		cancel()
+		if err != nil {
+			return false, fmt.Errorf("read probe target health: %w", err)
+		}
+		if strings.TrimSpace(result.stdout) != "Running:true" {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (v verifier) createPolicies(ctx context.Context, contextName, namespace string) error {
