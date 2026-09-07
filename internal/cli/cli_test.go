@@ -428,10 +428,10 @@ func TestWorkspaceCreateRequiresExplicitContext(t *testing.T) {
 }
 
 func TestWorkspaceCreateUsesSelectedContext(t *testing.T) {
-	var commandArgs []string
+	var commands [][]string
 	var selection deployment.Selection
 	deps := workspaceTestDependencies(func(_ string, args []string, _, _ io.Writer) error {
-		commandArgs = slices.Clone(args)
+		commands = append(commands, slices.Clone(args))
 		return nil
 	})
 	deps.materialize = func(actual deployment.ManifestRequest) (string, func(), error) {
@@ -452,9 +452,13 @@ func TestWorkspaceCreateUsesSelectedContext(t *testing.T) {
 		deps,
 	)
 
-	expected := []string{"--context", "minikube", "apply", "-k", "/manifests/minikube"}
-	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
-		t.Fatalf("unexpected create result: exit=%d args=%v", exitCode, commandArgs)
+	expected := [][]string{
+		{"--context", "minikube", "--request-timeout=10s", "create", "-f", "/manifests/kubernetes/namespace.yaml"},
+		{"--context", "minikube", "--request-timeout=10s", "apply", "-k", "/manifests/minikube"},
+		{"--context", "minikube", "--namespace", "paw-workspace", "--request-timeout=130s", "rollout", "status", "statefulset/workspace", "--timeout=120s"},
+	}
+	if exitCode != 0 || !slices.EqualFunc(commands, expected, slices.Equal[[]string]) {
+		t.Fatalf("unexpected create result: exit=%d args=%v", exitCode, commands)
 	}
 	if selection != (deployment.Selection{Profile: "platform-readonly", Provider: "opencode"}) {
 		t.Fatalf("unexpected selection: %#v", selection)
@@ -527,35 +531,6 @@ func TestWorkspaceDestroyRequiresExplicitStateDeletion(t *testing.T) {
 
 	if exitCode != 2 || !strings.Contains(stderr.String(), "requires --delete-state") {
 		t.Fatalf("expected state deletion usage error, got %d and %q", exitCode, stderr.String())
-	}
-}
-
-func TestWorkspaceDestroyDeletesExactKustomization(t *testing.T) {
-	var commandArgs []string
-	deps := workspaceTestDependencies(func(_ string, args []string, _, _ io.Writer) error {
-		commandArgs = slices.Clone(args)
-		return nil
-	})
-
-	exitCode := runWithDependencies(
-		[]string{
-			"workspace", "destroy",
-			"--adapter", "kubernetes",
-			"--context", "paw-k3s",
-			"--delete-state",
-		},
-		&bytes.Buffer{},
-		&bytes.Buffer{},
-		deps,
-	)
-
-	expected := []string{
-		"--context", "paw-k3s",
-		"delete", "-k", "/manifests/kubernetes",
-		"--ignore-not-found=true",
-	}
-	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
-		t.Fatalf("unexpected destroy result: exit=%d args=%v", exitCode, commandArgs)
 	}
 }
 
@@ -927,6 +902,9 @@ func workspaceTestDependencies(runner commandRunner) dependencies {
 		},
 		addRepo: func(repository.Request, io.Writer, io.Writer) error {
 			return fmt.Errorf("unexpected repository materialization")
+		},
+		verifyEnv: func(_ context.Context, _ environment.Request) (environment.Report, error) {
+			return environment.Report{Outcome: environment.OutcomePass}, nil
 		},
 	}
 }

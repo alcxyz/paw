@@ -20,7 +20,7 @@ import (
 
 const (
 	ContractVersion = "v0"
-	ProbeVersion    = "network-policy-v1"
+	ProbeVersion    = "network-policy-v2"
 	SchemaVersion   = "paw.environment.verify/v1"
 
 	probeImage = "registry.k8s.io/e2e-test-images/agnhost@sha256:" +
@@ -151,6 +151,9 @@ func (execRunner) run(
 	args ...string,
 ) (commandResult, error) {
 	command := exec.CommandContext(ctx, name, args...)
+	// Credential helpers can leave descendants holding the capture pipes open
+	// after kubectl exits. Bound the wait for those pipes as well as the process.
+	command.WaitDelay = time.Second
 	command.Stdin = stdin
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -161,10 +164,11 @@ func (execRunner) run(
 }
 
 type verifier struct {
-	runner       runner
-	now          func() time.Time
-	newNamespace func() (string, error)
-	sleep        func(context.Context, time.Duration) error
+	runner        runner
+	now           func() time.Time
+	newNamespace  func() (string, error)
+	sleep         func(context.Context, time.Duration) error
+	policyTimeout time.Duration
 }
 
 func (v verifier) verify(ctx context.Context, request Request) (Report, error) {
@@ -189,9 +193,14 @@ func (v verifier) verify(ctx context.Context, request Request) (Report, error) {
 		return report, fmt.Errorf("generate verification namespace: %w", err)
 	}
 
-	created := false
-	runErr := v.run(ctx, request.Context, namespace, &created, &report)
-	cleanupErr := v.cleanup(request.Context, namespace, created, &report)
+	ownerToken, err := v.newNamespace()
+	if err != nil {
+		report.CompletedAt = v.now()
+		return report, fmt.Errorf("generate verification ownership token: %w", err)
+	}
+	owned := namespaceOwnership{token: ownerToken}
+	runErr := v.run(ctx, request.Context, namespace, &owned, &report)
+	cleanupErr := v.cleanup(request.Context, namespace, owned, &report)
 	report.CompletedAt = v.now()
 
 	if cleanupErr != nil {
@@ -211,7 +220,7 @@ func (v verifier) run(
 	ctx context.Context,
 	contextName string,
 	namespace string,
-	created *bool,
+	owned *namespaceOwnership,
 	report *Report,
 ) error {
 	version, err := v.serverVersion(ctx, contextName)
@@ -248,10 +257,13 @@ func (v verifier) run(
 		Message: "generated namespace was absent before creation",
 	})
 
-	if err := v.createNamespace(ctx, contextName, namespace); err != nil {
-		owned, ownershipErr := v.namespaceOwned(contextName, namespace)
-		if ownershipErr == nil && owned {
-			*created = true
+	identity, err := v.createNamespace(ctx, contextName, namespace, owned.token)
+	if err != nil {
+		lookupCtx, cancel := context.WithTimeout(context.Background(), apiTimeout)
+		identity, ownershipErr := v.readNamespace(lookupCtx, contextName, namespace)
+		cancel()
+		if ownershipErr == nil && identity.Metadata.Labels["paw.alc.xyz/verification-id"] == owned.token {
+			owned.uid = identity.Metadata.UID
 		}
 		report.Checks = append(report.Checks, Check{
 			Name: "namespace-create", Status: StatusError,
@@ -262,7 +274,7 @@ func (v verifier) run(
 		}
 		return err
 	}
-	*created = true
+	owned.uid = identity.Metadata.UID
 	report.Checks = append(report.Checks, Check{
 		Name: "namespace-create", Status: StatusPass,
 		Message: "created an isolated restricted namespace",
@@ -382,7 +394,7 @@ func (v verifier) run(
 	if !targetsHealthy {
 		report.Checks = append(report.Checks, Check{
 			Name: "target-health", Status: StatusInconclusive,
-			Message: "one or more target processes stopped during policy evaluation",
+			Message: "one or more target processes were unhealthy or stopped listening during policy evaluation",
 		})
 		if !isolationFailed {
 			report.Outcome = OutcomeInconclusive
@@ -391,7 +403,28 @@ func (v verifier) run(
 	} else {
 		report.Checks = append(report.Checks, Check{
 			Name: "target-health", Status: StatusPass,
-			Message: "both target processes remained running and ready",
+			Message: "both target processes remained running and accepted loopback connections",
+		})
+	}
+	// Neither endpoint of this path is selected by a deny policy. A network
+	// outage must not be accepted as evidence that both policies enforce.
+	controlReachable, controlErr := v.probe(ctx, contextName, namespace, "ingress-client", egressTarget)
+	if controlErr != nil {
+		return controlErr
+	}
+	if !controlReachable {
+		report.Checks = append(report.Checks, Check{
+			Name: "unselected-positive-control", Status: StatusInconclusive,
+			Message: "the unselected path stopped working during policy evaluation",
+		})
+		if !isolationFailed {
+			report.Outcome = OutcomeInconclusive
+			return nil
+		}
+	} else {
+		report.Checks = append(report.Checks, Check{
+			Name: "unselected-positive-control", Status: StatusPass,
+			Message: "the unselected path remained reachable while policies were active",
 		})
 	}
 	if isolationFailed {
@@ -444,33 +477,66 @@ func (v verifier) namespaceExists(
 	return strings.TrimSpace(result.stdout) != "", nil
 }
 
-func (v verifier) createNamespace(ctx context.Context, contextName, namespace string) error {
-	commandCtx, cancel := context.WithTimeout(ctx, apiTimeout)
-	defer cancel()
-	_, err := v.runner.run(commandCtx, "kubectl", strings.NewReader(namespaceManifest(namespace)),
-		"--context", contextName,
-		"--request-timeout=8s",
-		"create", "--filename=-",
-	)
-	if err != nil {
-		return fmt.Errorf("create verification namespace: %w", err)
-	}
-	return nil
+type namespaceOwnership struct {
+	token string
+	uid   string
 }
 
-func (v verifier) namespaceOwned(contextName, namespace string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), apiTimeout)
+type namespaceIdentity struct {
+	Metadata struct {
+		Name            string            `json:"name"`
+		UID             string            `json:"uid"`
+		ResourceVersion string            `json:"resourceVersion"`
+		Labels          map[string]string `json:"labels"`
+	} `json:"metadata"`
+}
+
+func (v verifier) createNamespace(ctx context.Context, contextName, namespace, ownerToken string) (namespaceIdentity, error) {
+	commandCtx, cancel := context.WithTimeout(ctx, apiTimeout)
+	defer cancel()
+	result, err := v.runner.run(commandCtx, "kubectl", strings.NewReader(namespaceManifest(namespace, ownerToken)),
+		"--context", contextName,
+		"--request-timeout=8s",
+		"create", "--filename=-", "--output=json",
+	)
+	if err != nil {
+		return namespaceIdentity{}, fmt.Errorf("create verification namespace: %w", err)
+	}
+	identity, err := decodeNamespace(result.stdout, namespace)
+	if err != nil {
+		return namespaceIdentity{}, err
+	}
+	if identity.Metadata.UID == "" || identity.Metadata.Labels["paw.alc.xyz/verification-id"] != ownerToken {
+		return namespaceIdentity{}, errors.New("namespace creation did not confirm verification ownership")
+	}
+	return identity, nil
+}
+
+func (v verifier) readNamespace(ctx context.Context, contextName, namespace string) (namespaceIdentity, error) {
+	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
 	result, err := v.runner.run(ctx, "kubectl", nil,
 		"--context", contextName,
 		"--request-timeout=8s",
 		"get", "namespace", namespace,
-		`--output=jsonpath={.metadata.labels.paw\.alc\.xyz/verification-id}`,
+		"--output=json", "--ignore-not-found=true",
 	)
 	if err != nil {
-		return false, err
+		return namespaceIdentity{}, err
 	}
-	return strings.TrimSpace(result.stdout) == namespace, nil
+	return decodeNamespace(result.stdout, namespace)
+}
+
+func decodeNamespace(value, namespace string) (namespaceIdentity, error) {
+	var identity namespaceIdentity
+	if strings.TrimSpace(value) == "" {
+		return identity, nil
+	}
+	if err := json.Unmarshal([]byte(value), &identity); err != nil || identity.Metadata.Name != namespace ||
+		identity.Metadata.UID == "" || identity.Metadata.ResourceVersion == "" {
+		return namespaceIdentity{}, errors.New("namespace response did not contain a valid identity")
+	}
+	return identity, nil
 }
 
 func (v verifier) createProbePods(ctx context.Context, contextName, namespace string) error {
@@ -537,6 +603,13 @@ func (v verifier) targetsHealthy(ctx context.Context, contextName, namespace str
 		if strings.TrimSpace(result.stdout) != "Running:true" {
 			return false, nil
 		}
+		listening, err := v.probe(ctx, contextName, namespace, pod, "127.0.0.1")
+		if err != nil {
+			return false, fmt.Errorf("check probe target listener: %w", err)
+		}
+		if !listening {
+			return false, nil
+		}
 	}
 	return true, nil
 }
@@ -580,10 +653,23 @@ func (v verifier) probe(
 	if commandCtx.Err() != nil {
 		return false, commandCtx.Err()
 	}
-	message := strings.TrimSpace(result.stdout + "\n" + result.stderr)
-	for _, prefix := range []string{"TIMEOUT", "REFUSED", "OTHER:"} {
-		if strings.Contains(message, prefix) {
-			return false, nil
+	// kubectl's transport errors can themselves contain these words. Require
+	// the complete agnhost TCP result followed by kubectl's remote exit marker,
+	// rather than accepting a substring of an arbitrary operational error.
+	message := strings.TrimSpace(result.stderr)
+	lines := strings.Split(message, "\n")
+	if strings.TrimSpace(result.stdout) == "" && len(lines) == 2 &&
+		lines[1] == "command terminated with exit code 1" &&
+		(lines[0] == "TIMEOUT" || lines[0] == "REFUSED") {
+		return false, nil
+	}
+	if strings.TrimSpace(result.stdout) == "" && len(lines) == 2 &&
+		lines[1] == "command terminated with exit code 1" {
+		address := netip.AddrPortFrom(netip.MustParseAddr(target), 8080).String()
+		for _, reason := range []string{"no route to host", "network is unreachable", "permission denied", "operation not permitted"} {
+			if lines[0] == "OTHER: dial tcp "+address+": connect: "+reason {
+				return false, nil
+			}
 		}
 	}
 	return false, errors.New("connectivity probe did not return a recognized network result")
@@ -596,7 +682,14 @@ func (v verifier) waitForDenial(
 	pod string,
 	target string,
 ) (bool, error) {
-	deadline := v.now().Add(policyDeadline)
+	parentCtx := ctx
+	duration := v.policyTimeout
+	if duration == 0 {
+		duration = policyDeadline
+	}
+	ctx, cancel := context.WithTimeout(ctx, duration)
+	defer cancel()
+	deadline := v.now().Add(duration)
 	consecutiveDenials := 0
 	for {
 		reachable, err := v.probe(ctx, contextName, namespace, pod, target)
@@ -615,6 +708,9 @@ func (v verifier) waitForDenial(
 			return false, nil
 		}
 		if err := v.sleep(ctx, policyRetryDelay); err != nil {
+			if reachable && errors.Is(ctx.Err(), context.DeadlineExceeded) && parentCtx.Err() == nil {
+				return false, nil
+			}
 			return false, fmt.Errorf("wait for policy convergence: %w", err)
 		}
 	}
@@ -623,21 +719,13 @@ func (v verifier) waitForDenial(
 func (v verifier) cleanup(
 	contextName string,
 	namespace string,
-	created bool,
+	owned namespaceOwnership,
 	report *Report,
 ) error {
-	if !created {
+	if owned.uid == "" {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
-	defer cancel()
-	_, err := v.runner.run(ctx, "kubectl", nil,
-		"--context", contextName,
-		"--request-timeout=8s",
-		"delete", "namespace", namespace,
-		"--wait=true",
-		"--timeout=20s",
-	)
+	err := v.deleteNamespace(contextName, namespace, owned)
 	if err != nil {
 		report.Checks = append(report.Checks, Check{
 			Name: "cleanup", Status: StatusError,
@@ -650,6 +738,57 @@ func (v verifier) cleanup(
 		Message: "the ephemeral probe namespace was deleted",
 	})
 	return nil
+}
+
+func (v verifier) deleteNamespace(contextName, namespace string, owned namespaceOwnership) error {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	identity, err := v.readNamespace(ctx, contextName, namespace)
+	if err != nil {
+		return err
+	}
+	if identity.Metadata.UID == "" {
+		return nil
+	}
+	if identity.Metadata.UID != owned.uid || identity.Metadata.Labels["paw.alc.xyz/verification-id"] != owned.token {
+		return errors.New("verification namespace ownership changed; refusing deletion")
+	}
+	options := struct {
+		APIVersion    string `json:"apiVersion"`
+		Kind          string `json:"kind"`
+		Preconditions struct {
+			UID             string `json:"uid"`
+			ResourceVersion string `json:"resourceVersion"`
+		} `json:"preconditions"`
+	}{APIVersion: "v1", Kind: "DeleteOptions"}
+	options.Preconditions.UID = owned.uid
+	options.Preconditions.ResourceVersion = identity.Metadata.ResourceVersion
+	body, err := json.Marshal(options)
+	if err != nil {
+		return err
+	}
+	_, err = v.runner.run(ctx, "kubectl", bytes.NewReader(body),
+		"--context", contextName, "--request-timeout=8s",
+		"delete", "--raw=/api/v1/namespaces/"+namespace, "--filename=-",
+	)
+	if err != nil {
+		return err
+	}
+	for {
+		identity, err := v.readNamespace(ctx, contextName, namespace)
+		if err != nil {
+			return err
+		}
+		if identity.Metadata.UID == "" {
+			return nil
+		}
+		if identity.Metadata.UID != owned.uid {
+			return errors.New("verification namespace was replaced during cleanup")
+		}
+		if err := v.sleep(ctx, time.Second); err != nil {
+			return err
+		}
+	}
 }
 
 func randomNamespace() (string, error) {
@@ -671,7 +810,7 @@ func sleepContext(ctx context.Context, duration time.Duration) error {
 	}
 }
 
-func namespaceManifest(namespace string) string {
+func namespaceManifest(namespace, ownerToken string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Namespace
 metadata:
@@ -685,7 +824,7 @@ metadata:
     pod-security.kubernetes.io/audit-version: latest
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/warn-version: latest
-`, namespace, namespace)
+`, namespace, ownerToken)
 }
 
 func podManifest(namespace string) string {

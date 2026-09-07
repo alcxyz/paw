@@ -251,14 +251,13 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 		return runWorkspacePair(options, stdout, stderr, deps)
 	case "revoke":
 		return runWorkspaceRevoke(options, stdout, stderr, deps)
+	case "destroy":
+		return runWorkspaceDestroy(options, stdout, stderr, deps)
 	}
 
-	selection := deployment.Selection{Profile: "core", Provider: "none"}
-	if operation != "destroy" {
-		selection = deployment.Selection{
-			Profile:  options.profile,
-			Provider: options.provider,
-		}
+	selection := deployment.Selection{
+		Profile:  options.profile,
+		Provider: options.provider,
 	}
 	if _, err := deployment.ImageName(selection); err != nil {
 		return usageError(stderr, err.Error())
@@ -286,17 +285,10 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	}
 	defer cleanup()
 
-	commandArgs := []string{"kustomize", manifestPath}
 	if operation == "create" {
-		commandArgs = []string{"--context", options.context, "apply", "-k", manifestPath}
+		return runWorkspaceCreate(options, manifestPath, stdout, stderr, deps)
 	}
-	if operation == "destroy" {
-		commandArgs = []string{
-			"--context", options.context,
-			"delete", "-k", manifestPath,
-			"--ignore-not-found=true",
-		}
-	}
+	commandArgs := []string{"kustomize", manifestPath}
 	if err := deps.runCommand("kubectl", commandArgs, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "paw: kubectl %s failed: %v\n", operation, err)
 		return 1
@@ -592,9 +584,23 @@ func executeCommandWithSignals(
 	stdout, stderr io.Writer,
 	signals <-chan os.Signal,
 ) error {
+	return executeCommandWithGrace(name, args, stdout, stderr, signals, 5*time.Second)
+}
+
+func executeCommandWithGrace(
+	name string,
+	args []string,
+	stdout, stderr io.Writer,
+	signals <-chan os.Signal,
+	grace time.Duration,
+) error {
 	command := exec.Command(name, args...)
 	command.Stdout = stdout
 	command.Stderr = stderr
+	// Keep the child and its helpers in a separate group so terminal signals
+	// arrive once, through PAW, and forced termination includes descendants.
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.WaitDelay = grace
 	if err := command.Start(); err != nil {
 		return err
 	}
@@ -604,14 +610,45 @@ func executeCommandWithSignals(
 		done <- command.Wait()
 	}()
 
+	var timer *time.Timer
+	var deadline <-chan time.Time
+	interrupted := false
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	for {
 		select {
 		case err := <-done:
-			return err
-		case received := <-signals:
-			if received != nil {
-				_ = command.Process.Signal(received)
+			if interrupted {
+				_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+				if err == nil {
+					return fmt.Errorf("command interrupted")
+				}
 			}
+			return err
+		case received, open := <-signals:
+			if !open {
+				signals = nil
+				continue
+			}
+			if received == nil {
+				continue
+			}
+			if interrupted {
+				_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+				continue
+			}
+			interrupted = true
+			if sig, ok := received.(syscall.Signal); ok {
+				_ = syscall.Kill(-command.Process.Pid, sig)
+			}
+			timer = time.NewTimer(grace)
+			deadline = timer.C
+		case <-deadline:
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+			deadline = nil
 		}
 	}
 }

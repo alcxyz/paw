@@ -5,6 +5,7 @@ set -euo pipefail
 namespace="paw-workspace"
 port_forward_pid=""
 workspace_created=false
+workspace_uid=""
 
 fail() {
   printf 'live conformance: %s\n' "$1" >&2
@@ -17,14 +18,41 @@ cleanup() {
     wait "$port_forward_pid" 2>/dev/null || true
   fi
   if [[ "$workspace_created" == true ]]; then
-    "$paw_binary" workspace destroy \
-      --adapter minikube \
-      --context "$context" \
-      --delete-state >/dev/null 2>&1 || true
+    if ! destroy_owned_workspace; then
+      printf 'live conformance: automatic cleanup failed; inspect the test workspace before removing it\n' >&2
+      return 1
+    fi
   fi
 }
 
-trap cleanup EXIT INT TERM
+namespace_uid() {
+  kubectl --context "$context" get namespace "$namespace" \
+    --ignore-not-found --output='jsonpath={.metadata.uid}'
+}
+
+destroy_owned_workspace() {
+  local current_uid
+  current_uid="$(namespace_uid)" || return 1
+  if [[ -z "$current_uid" ]]; then
+    workspace_created=false
+    return 0
+  fi
+  if [[ "$current_uid" != "$workspace_uid" ]]; then
+    printf 'live conformance: namespace ownership changed; refusing cleanup\n' >&2
+    return 1
+  fi
+  "$paw_binary" workspace destroy \
+    --adapter minikube \
+    --context "$context" \
+    --delete-state >/dev/null || return 1
+  current_uid="$(namespace_uid)" || return 1
+  [[ -z "$current_uid" ]] || return 1
+  workspace_created=false
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [[ "${PAW_LIVE_TEST:-}" != "1" ]]; then
   fail "set PAW_LIVE_TEST=1 to acknowledge creation and deletion of an ephemeral test workspace"
@@ -52,16 +80,21 @@ for dependency in curl git jq kubectl; do
 done
 
 kubectl --context "$context" get nodes >/dev/null
-if kubectl --context "$context" get namespace "$namespace" >/dev/null 2>&1; then
+existing_uid="$(namespace_uid)" || fail "cannot establish whether the test namespace exists"
+if [[ -n "$existing_uid" ]]; then
   fail "namespace $namespace already exists; refusing to alter a workspace not created by this test"
 fi
 
-workspace_created=true
-"$paw_binary" workspace create \
+if ! "$paw_binary" workspace create \
   --adapter minikube \
   --context "$context" \
   --profile core \
-  --provider none >/dev/null
+  --provider none >/dev/null; then
+  fail "workspace creation failed; any partially created workspace is retained for inspection"
+fi
+workspace_uid="$(namespace_uid)" || fail "cannot establish ownership of the created workspace; inspect it manually"
+[[ -n "$workspace_uid" ]] || fail "created workspace namespace is missing"
+workspace_created=true
 
 kubectl --context "$context" --namespace "$namespace" rollout status \
   statefulset/workspace --timeout=240s >/dev/null
@@ -174,24 +207,38 @@ secret_objects="$(
 
 probe_egress() {
   local pod=$1
+  local result
 
   # $1 and $2 in the command belong to the remote shell.
   # shellcheck disable=SC2016
-  kubectl --context "$context" --namespace "$namespace" exec "$pod" -- \
+  result="$(kubectl --context "$context" --namespace "$namespace" exec "$pod" -- \
     bash -ceu '
       command -v timeout >/dev/null
-      timeout 5 bash -c "</dev/tcp/$1/$2"
+      command -v bash >/dev/null
+      if timeout 5 bash -c "</dev/tcp/$1/$2" 2>/dev/null; then
+        printf connected
+      else
+        result=$?
+        test "$result" = 124 || exit "$result"
+        printf timed-out
+      fi
     ' paw-egress-probe "$egress_probe_host" "$egress_probe_port" \
-    >/dev/null 2>&1
+    2>/dev/null)" || return 1
+  [[ "$result" == connected || "$result" == timed-out ]] || return 1
+  printf '%s' "$result"
 }
 
-if ! probe_egress egress-positive-control; then
+positive_result="$(probe_egress egress-positive-control)" || fail "positive-control probe could not execute"
+if [[ "$positive_result" != connected ]]; then
   fail "positive-control pod cannot reach $egress_probe_host:$egress_probe_port; egress enforcement cannot be evaluated"
 fi
 
-if probe_egress workspace-0; then
+negative_result="$(probe_egress workspace-0)" || fail "workspace egress probe failed to execute; denial is inconclusive"
+if [[ "$negative_result" == connected ]]; then
   fail "default-deny egress is not enforced"
 fi
+positive_result="$(probe_egress egress-positive-control)" || fail "positive-control recheck could not execute"
+[[ "$positive_result" == connected ]] || fail "positive-control destination stopped responding; denial is inconclusive"
 
 "$paw_binary" workspace connect \
   --adapter minikube \
@@ -288,14 +335,6 @@ kill "$port_forward_pid" 2>/dev/null || true
 wait "$port_forward_pid" 2>/dev/null || true
 port_forward_pid=""
 
-"$paw_binary" workspace destroy \
-  --adapter minikube \
-  --context "$context" \
-  --delete-state >/dev/null
-
-if kubectl --context "$context" get namespace "$namespace" >/dev/null 2>&1; then
-  fail "ephemeral workspace namespace still exists after destroy"
-fi
-workspace_created=false
+destroy_owned_workspace || fail "ephemeral workspace cleanup could not be verified"
 
 printf 'live Minikube conformance passed for context %s\n' "$context"

@@ -201,8 +201,12 @@ func MaterializeManifest(request ManifestRequest) (string, func(), error) {
     digest: %s
 `, repository, digest)
 	}
-	configured += fmt.Sprintf(`patches:
-  - target:
+	// Minikube already declares its local-only image-pull patch. Append the
+	// composition patches to that list rather than emitting a duplicate key.
+	if request.Adapter != AdapterMinikube {
+		configured += "patches:\n"
+	}
+	configured += fmt.Sprintf(`  - target:
       group: apps
       version: v1
       kind: StatefulSet

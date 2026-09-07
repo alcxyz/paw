@@ -8,6 +8,7 @@
 | [ADR-004](ADR-004-streamed-git-bundle-repository-materialization.md) | Streamed Git bundle repository materialization | Accepted |
 | [ADR-005](ADR-005-portable-kubernetes-networking-and-environment-conformance.md) | Portable Kubernetes networking and environment conformance | Accepted |
 | [ADR-006](ADR-006-staged-runtime-backend-extensibility.md) | Staged runtime-backend extensibility | Accepted |
+| [ADR-007](ADR-007-workspace-lifecycle-ownership-and-readiness.md) | Workspace lifecycle ownership and readiness | Accepted |
 
 ## Statuses
 

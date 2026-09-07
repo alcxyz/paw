@@ -69,6 +69,18 @@ traffic. Client-access and egress adapters must add narrowly scoped policy for
 their environment. They must never replace the default deny with unrestricted
 ingress or egress.
 
+Creation first runs baseline network verification, atomically creates the
+PAW-owned namespace, then applies the workload and waits for readiness. It
+refuses an existing namespace. Failed application or readiness retains partial
+resources for inspection rather than claiming a usable workspace.
+
+The Minikube adapter requires images to be preloaded (`imagePullPolicy: Never`).
+The generic adapter pulls the requested immutable image when needed. Workspace
+deletion checks the namespace ownership label and uses UID/resource-version
+preconditions, then waits for namespace deletion. Legacy namespaces lacking
+the ownership marker require operator-reviewed cleanup. These safeguards do
+not prove backing-volume reclamation; that remains storage-adapter work.
+
 ## T3 startup and pairing
 
 The workload uses `t3 start` in authenticated web mode at warning log level.

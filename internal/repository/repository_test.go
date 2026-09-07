@@ -3,11 +3,13 @@ package repository
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestResolveSelectsNamedCommittedRef(t *testing.T) {
@@ -92,23 +94,271 @@ func TestFinishAddPrefersWorkspaceFailureOverBundlePipeFailure(t *testing.T) {
 	}
 }
 
-func TestMaterializationUsesVerifiedBundleAndAtomicDestination(t *testing.T) {
-	for _, required := range []string{
-		"mktemp -d /workspace/work/.paw-repository.",
-		"bundle list-heads",
-		"bundle unbundle",
-		"checkout --quiet --detach",
-		"mv --no-clobber -T \"$staging\" \"$destination\"",
-		"destination $destination appeared during materialization",
+func TestMaterializationImportsOnlySelectedCommittedContent(t *testing.T) {
+	for _, ref := range []string{"refs/heads/main", "refs/tags/release"} {
+		t.Run(ref, func(t *testing.T) {
+			source := newTestRepository(t)
+			gitTestRun(t, source, "-c", "user.name=PAW test", "-c", "user.email=paw-test.invalid",
+				"tag", "--annotate", "release", "--message=release")
+			gitTestRun(t, source, "remote", "add", "origin", "https://example.invalid/selected.git")
+			writeTestFile(t, filepath.Join(source, "README.md"), "uncommitted\n")
+			writeTestFile(t, filepath.Join(source, "untracked"), "not selected\n")
+			selected, err := resolve(source, ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			harness := newMaterializationHarness(t, selected)
+			if output, err := harness.command(bytes.NewReader(createTestBundle(t, selected))).CombinedOutput(); err != nil {
+				t.Fatalf("materialization failed: %v: %s", err, output)
+			}
+			if got := gitTestOutput(t, harness.destination, "rev-parse", "HEAD"); got != selected.commit {
+				t.Fatalf("expected selected commit %s, got %s", selected.commit, got)
+			}
+			if got := gitTestOutput(t, harness.destination, "rev-parse", "--abbrev-ref", "HEAD"); got != "HEAD" {
+				t.Fatalf("expected detached checkout, got %s", got)
+			}
+			if got := gitTestOutput(t, harness.destination, "remote"); got != "" {
+				t.Fatalf("unexpected imported remote: %s", got)
+			}
+			content, err := os.ReadFile(filepath.Join(harness.destination, "README.md"))
+			if err != nil || string(content) != "test\n" {
+				t.Fatalf("committed content not preserved: %q, %v", content, err)
+			}
+			if _, err := os.Stat(filepath.Join(harness.destination, "untracked")); !os.IsNotExist(err) {
+				t.Fatalf("untracked source content imported: %v", err)
+			}
+			writeTestFile(t, filepath.Join(harness.destination, "README.md"), "workspace edit\n")
+			if got := gitTestOutput(t, harness.destination, "status", "--porcelain"); got != "M README.md" {
+				t.Fatalf("expected writable tracked checkout, got %q", got)
+			}
+			harness.assertCleaned(t)
+		})
+	}
+}
+
+func TestMaterializationRejectsInvalidBundlesAndCleansUp(t *testing.T) {
+	source := newTestRepository(t)
+	selected, err := resolve(source, "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := createTestBundle(t, selected)
+	gitTestRun(t, source, "branch", "other")
+	multipleRefs, err := exec.Command("git", "-C", source, "bundle", "create", "-", selected.ref, "refs/heads/other").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name      string
+		data      []byte
+		selection selection
+	}{
+		{"malformed", []byte("not a Git bundle\n"), selected},
+		{"truncated", bundle[:len(bundle)-16], selected},
+		{"multiple-refs", multipleRefs, selected},
+		{"wrong-ref", bundle, selection{ref: "refs/heads/other", object: selected.object, commit: selected.commit}},
+		{"wrong-object", bundle, selection{ref: selected.ref, object: strings.Repeat("0", 40), commit: selected.commit}},
+		{"wrong-commit", bundle, selection{ref: selected.ref, object: selected.object, commit: strings.Repeat("0", 40)}},
 	} {
-		if !strings.Contains(materializeScript, required) {
-			t.Fatalf("materialization script is missing %q", required)
+		t.Run(test.name, func(t *testing.T) {
+			harness := newMaterializationHarness(t, test.selection)
+			if output, err := harness.command(bytes.NewReader(test.data)).CombinedOutput(); err == nil {
+				t.Fatalf("invalid bundle accepted: %s", output)
+			}
+			if _, err := os.Lstat(harness.destination); !os.IsNotExist(err) {
+				t.Fatalf("failed import left a destination: %v", err)
+			}
+			harness.assertCleaned(t)
+		})
+	}
+}
+
+func TestMaterializationRefusesExistingDestinations(t *testing.T) {
+	source := newTestRepository(t)
+	selected, err := resolve(source, "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"directory", "dangling-symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			harness := newMaterializationHarness(t, selected)
+			if kind == "directory" {
+				if err := os.Mkdir(harness.destination, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeTestFile(t, filepath.Join(harness.destination, "preserved"), "original")
+			} else if err := os.Symlink("missing", harness.destination); err != nil {
+				t.Fatal(err)
+			}
+			output, err := harness.command(bytes.NewReader(createTestBundle(t, selected))).CombinedOutput()
+			if err == nil || !strings.Contains(string(output), "already exists") {
+				t.Fatalf("expected existing destination refusal: %v: %s", err, output)
+			}
+			if kind == "directory" {
+				if content, err := os.ReadFile(filepath.Join(harness.destination, "preserved")); err != nil || string(content) != "original" {
+					t.Fatalf("existing content changed: %q, %v", content, err)
+				}
+			} else if target, err := os.Readlink(harness.destination); err != nil || target != "missing" {
+				t.Fatalf("existing symlink changed: %q, %v", target, err)
+			}
+			harness.assertCleaned(t)
+		})
+	}
+}
+
+func TestMaterializationCleansBundleWhenStagingCreationFails(t *testing.T) {
+	harness := newMaterializationHarness(t, selection{})
+	if err := os.Remove(harness.work); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := harness.command(strings.NewReader("")).CombinedOutput(); err == nil {
+		t.Fatalf("expected staging creation failure: %s", output)
+	}
+	harness.assertCleaned(t)
+}
+
+func TestMaterializationRefusesConcurrentDestination(t *testing.T) {
+	source := newTestRepository(t)
+	selected, err := resolve(source, "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := newMaterializationHarness(t, selected)
+	command := harness.command(nil)
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	var output bytes.Buffer
+	command.Stdout, command.Stderr = &output, &output
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		entries, err := filepath.Glob(filepath.Join(harness.work, ".paw-repository.*"))
+		if err != nil {
+			t.Fatal(err)
 		}
+		if len(entries) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("materialization did not reach bundle reception")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := os.Mkdir(harness.destination, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(harness.destination, "preserved"), "concurrent")
+	if _, err := stdin.Write(createTestBundle(t, selected)); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Wait(); err == nil || !strings.Contains(output.String(), "appeared during materialization") {
+		t.Fatalf("expected concurrent destination refusal: %v: %s", err, output.String())
+	}
+	if content, err := os.ReadFile(filepath.Join(harness.destination, "preserved")); err != nil || string(content) != "concurrent" {
+		t.Fatalf("concurrent destination changed: %q, %v", content, err)
+	}
+	harness.assertCleaned(t)
+}
+
+func TestMaterializationIgnoresRecipientTemplatesAndCheckoutFilters(t *testing.T) {
+	source := newTestRepository(t)
+	writeTestFile(t, filepath.Join(source, ".gitattributes"), "README.md filter=unexpected\n")
+	gitTestRun(t, source, "add", ".gitattributes")
+	gitTestRun(t, source, "-c", "user.name=PAW test", "-c", "user.email=paw-test.invalid", "commit", "--message=attributes")
+	selected, err := resolve(source, "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := newMaterializationHarness(t, selected)
+	template := t.TempDir()
+	writeTestFile(t, filepath.Join(template, "config"), "[remote \"unexpected\"]\n\turl = https://example.invalid/unexpected.git\n")
+	if err := os.Mkdir(filepath.Join(template, "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(template, "hooks", "post-checkout")
+	writeTestFile(t, hook, "#!/bin/sh\nexit 1\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(t.TempDir(), "gitconfig")
+	writeTestFile(t, config, "[filter \"unexpected\"]\n\tsmudge = false\n\trequired = true\n")
+	command := harness.command(bytes.NewReader(createTestBundle(t, selected)))
+	command.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+config, "GIT_TEMPLATE_DIR="+template)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("recipient configuration affected import: %v: %s", err, output)
+	}
+	if got := gitTestOutput(t, harness.destination, "remote"); got != "" {
+		t.Fatalf("recipient template introduced a remote: %s", got)
+	}
+	harness.assertCleaned(t)
+}
+
+type materializationHarness struct {
+	work        string
+	temporary   string
+	destination string
+	selected    selection
+}
+
+func newMaterializationHarness(t *testing.T, selected selection) materializationHarness {
+	t.Helper()
+	work := filepath.Join(t.TempDir(), "work")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return materializationHarness{work: work, temporary: t.TempDir(), destination: filepath.Join(work, "selected"), selected: selected}
+}
+
+func (h materializationHarness) command(stdin io.Reader) *exec.Cmd {
+	// Execute the production script with only its container paths relocated.
+	script := strings.ReplaceAll(materializeScript, "/workspace/work", h.work)
+	script = strings.ReplaceAll(script, "/tmp/paw-repository.", filepath.Join(h.temporary, "paw-repository."))
+	command := exec.Command("sh", "-ceu", script, "paw-repository", "selected", h.selected.ref, h.selected.object, h.selected.commit)
+	command.Stdin = stdin
+	return command
+}
+
+func (h materializationHarness) assertCleaned(t *testing.T) {
+	t.Helper()
+	for _, pattern := range []string{filepath.Join(h.work, ".paw-repository.*"), filepath.Join(h.temporary, "paw-repository.*")} {
+		entries, err := filepath.Glob(pattern)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("temporary materialization artifacts remain: %v, %v", entries, err)
+		}
+	}
+}
+
+func createTestBundle(t *testing.T, selected selection) []byte {
+	t.Helper()
+	output, err := exec.Command("git", "-C", selected.source, "bundle", "create", "-", selected.ref).Output()
+	if err != nil {
+		t.Fatalf("create test bundle: %v", err)
+	}
+	return output
+}
+
+func writeTestFile(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func newTestRepository(t *testing.T) string {
 	t.Helper()
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_COUNT", "0")
+	t.Setenv("GIT_TEMPLATE_DIR", t.TempDir())
 	repositoryPath := t.TempDir()
 	gitTestRun(t, repositoryPath, "init", "--initial-branch=main")
 	if err := os.WriteFile(filepath.Join(repositoryPath, "README.md"), []byte("test\n"), 0o644); err != nil {

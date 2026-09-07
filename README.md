@@ -110,6 +110,14 @@ control. The command returns nonzero unless every check and cleanup passes;
 `--json` emits the versioned, credential-free evidence record. It never inspects
 or changes the cluster networking implementation.
 
+`workspace create` runs this network verification automatically, reserves a new
+`paw-workspace` namespace, and waits up to two minutes for the StatefulSet to
+become ready. An existing namespace is refused, including an existing PAW
+workspace: creation is not an update command. Failed application or readiness
+leaves resources available for inspection and explicit deletion. A passing
+network check does not establish storage, provider authentication, or bounded
+external egress readiness.
+
 The local connection command holds an operator-controlled port-forward on
 `127.0.0.1:3773`; it never binds an ambient LAN interface. While that command is
 running, `workspace pair` returns a one-time browser link directly to the
@@ -126,6 +134,17 @@ credential through the same selected pod and context.
 Service through the explicitly named Kubernetes context. The v0 destroy command
 requires `--delete-state` because the Minikube workspace state policy is
 ephemeral.
+
+`workspace destroy` requires the namespace's `paw.alc.xyz/managed-by: paw`
+ownership label and binds deletion to its UID and resource version. It refuses
+legacy or unrelated namespaces without that marker; review their ownership
+before performing manual cleanup. Deletion waits up to two minutes for the
+namespace to disappear and does not claim erasure of backing storage.
+
+For lifecycle and browser-access kubectl commands, the first interrupt requests
+graceful termination; a second interrupt or a five-second grace timeout kills
+the process group. Repository streaming and environment probes have separate
+execution paths.
 
 The local repository-source workflow accepts only the canonical root
 of an explicitly selected Git worktree and a named branch, tag, or
@@ -306,6 +325,12 @@ independent ingress and egress denial. A broken positive control is
 inconclusive, not evidence of enforcement. The same command is the qualification
 boundary for Minikube, K3s, non-production AKS, and the required non-enforcing
 negative lane.
+
+The current `network-policy-v2` probe also proves both target listeners and an
+unselected connection remain healthy while policy is active. It distinguishes
+the probe's network results from Kubernetes transport errors, and cleanup uses
+namespace identity preconditions. Earlier `network-policy-v1` reports do not
+qualify the revised probe.
 
 Inspect the evaluated, machine-readable profile contract:
 

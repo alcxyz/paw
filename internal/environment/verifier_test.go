@@ -2,6 +2,7 @@ package environment
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os/exec"
@@ -17,18 +18,25 @@ type runnerCall struct {
 }
 
 type probeRunner struct {
-	calls              []runnerCall
-	namespaceCollision bool
-	policiesCreated    bool
-	positiveFailure    bool
-	negativeError      bool
-	networkEnforced    bool
-	cleanupFailure     bool
-	namespaceCreated   bool
-	namespaceCreateErr bool
-	readinessTimeout   bool
-	readinessCanceled  bool
-	targetUnhealthy    bool
+	calls                 []runnerCall
+	namespaceCollision    bool
+	policiesCreated       bool
+	positiveFailure       bool
+	negativeError         bool
+	networkEnforced       bool
+	cleanupFailure        bool
+	namespaceCreated      bool
+	namespaceCreateErr    bool
+	readinessTimeout      bool
+	readinessCanceled     bool
+	targetUnhealthy       bool
+	listenerStopped       bool
+	unselectedFailure     bool
+	namespaceDeleted      bool
+	replacedBeforeCleanup bool
+	replacedDuringDelete  bool
+	foreignCreateOwner    bool
+	namespaceGone         bool
 }
 
 func (r *probeRunner) run(
@@ -54,11 +62,18 @@ func (r *probeRunner) run(
 	switch {
 	case strings.Contains(joined, "version --output=json"):
 		return commandResult{stdout: `{"serverVersion":{"gitVersion":"v1.33.7"}}`}, nil
-	case strings.Contains(joined, "get namespace") && strings.Contains(joined, "verification-id"):
-		if r.namespaceCreated {
-			return commandResult{stdout: "paw-verify-fixed"}, nil
+	case strings.Contains(joined, "get namespace") && strings.Contains(joined, "--output=json"):
+		if r.namespaceDeleted || r.namespaceGone || !r.namespaceCreated {
+			return commandResult{}, nil
 		}
-		return commandResult{}, nil
+		uid, owner := "original-uid", "paw-verify-fixed"
+		if r.replacedBeforeCleanup {
+			uid = "replacement-uid"
+		}
+		if r.foreignCreateOwner {
+			owner = "foreign-owner"
+		}
+		return commandResult{stdout: testNamespaceJSON(uid, owner)}, nil
 	case strings.Contains(joined, "get namespace"):
 		if r.namespaceCollision {
 			return commandResult{stdout: "namespace/paw-verify-fixed\n"}, nil
@@ -69,7 +84,7 @@ func (r *probeRunner) run(
 		if r.namespaceCreateErr {
 			return commandResult{}, errors.New("request result was lost")
 		}
-		return commandResult{}, nil
+		return commandResult{stdout: testNamespaceJSON("original-uid", "paw-verify-fixed")}, nil
 	case strings.Contains(input, "kind: Pod"):
 		return commandResult{}, nil
 	case strings.Contains(joined, "wait --for=condition=Ready"):
@@ -100,6 +115,18 @@ func (r *probeRunner) run(
 		r.policiesCreated = true
 		return commandResult{}, nil
 	case strings.Contains(joined, "exec pod/"):
+		if strings.Contains(joined, "127.0.0.1:8080") {
+			if r.listenerStopped {
+				return commandResult{stderr: "REFUSED\ncommand terminated with exit code 1"}, errors.New("exit status 1")
+			}
+			return commandResult{}, nil
+		}
+		if strings.Contains(joined, "exec pod/ingress-client") && strings.Contains(joined, "10.0.0.10:8080") {
+			if r.unselectedFailure {
+				return commandResult{stderr: "TIMEOUT\ncommand terminated with exit code 1"}, errors.New("exit status 1")
+			}
+			return commandResult{}, nil
+		}
 		if !r.policiesCreated {
 			if r.positiveFailure {
 				return commandResult{stderr: "unable to upgrade connection"}, errors.New("exit status 1")
@@ -113,14 +140,37 @@ func (r *probeRunner) run(
 			return commandResult{stderr: "TIMEOUT\ncommand terminated with exit code 1"}, errors.New("exit status 1")
 		}
 		return commandResult{}, nil
-	case strings.Contains(joined, "delete namespace"):
+	case strings.Contains(joined, "delete --raw=/api/v1/namespaces/"):
+		var options struct {
+			Preconditions struct {
+				UID             string `json:"uid"`
+				ResourceVersion string `json:"resourceVersion"`
+			} `json:"preconditions"`
+		}
+		if json.Unmarshal([]byte(input), &options) != nil || options.Preconditions.UID != "original-uid" || options.Preconditions.ResourceVersion != "42" {
+			return commandResult{}, errors.New("delete did not carry original UID and current resource version")
+		}
+		if r.replacedDuringDelete {
+			return commandResult{}, errors.New("server rejected UID precondition")
+		}
 		if r.cleanupFailure {
 			return commandResult{}, errors.New("exit status 1")
 		}
+		r.namespaceDeleted = true
 		return commandResult{}, nil
 	default:
 		return commandResult{}, errors.New("unexpected kubectl invocation")
 	}
+}
+
+func testNamespaceJSON(uid, owner string) string {
+	value, _ := json.Marshal(map[string]any{
+		"metadata": map[string]any{
+			"name": "paw-verify-fixed", "uid": uid, "resourceVersion": "42",
+			"labels": map[string]string{"paw.alc.xyz/verification-id": owner},
+		},
+	})
+	return string(value)
 }
 
 func testVerifier(runner runner) verifier {
@@ -153,6 +203,8 @@ func TestVerifyPassesIndependentIngressAndEgressControls(t *testing.T) {
 		"ingress-positive-control",
 		"default-deny-egress",
 		"default-deny-ingress",
+		"target-health",
+		"unselected-positive-control",
 		"cleanup",
 	} {
 		if !hasCheck(report, name, StatusPass) {
@@ -271,6 +323,43 @@ func TestVerifyCleansNamespaceAfterAmbiguousCreateFailure(t *testing.T) {
 	}
 }
 
+func TestVerifyDoesNotClaimForeignNamespaceAfterAmbiguousCreate(t *testing.T) {
+	runner := &probeRunner{namespaceCreateErr: true, foreignCreateOwner: true}
+	report, err := testVerifier(runner).verify(context.Background(), Request{Context: "test-context"})
+	if err == nil || report.Outcome != OutcomeError || runner.deletedNamespace() {
+		t.Fatalf("ambiguous creation claimed a foreign namespace: report=%#v err=%v", report, err)
+	}
+}
+
+func TestVerifyPreservesReplacedNamespaceDuringCleanup(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		runner          probeRunner
+		deleteRequested bool
+	}{
+		{"replacement before cleanup lookup", probeRunner{networkEnforced: true, replacedBeforeCleanup: true}, false},
+		{"replacement after lookup before delete", probeRunner{networkEnforced: true, replacedDuringDelete: true}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			report, err := testVerifier(&test.runner).verify(context.Background(), Request{Context: "test-context"})
+			if err == nil || report.Outcome != OutcomeError || !hasCheck(report, "cleanup", StatusError) {
+				t.Fatalf("replacement did not fail cleanup safely: report=%#v err=%v", report, err)
+			}
+			if test.runner.namespaceDeleted || test.runner.deletedNamespace() != test.deleteRequested {
+				t.Fatalf("replacement deletion was not prevented: %#v", test.runner)
+			}
+		})
+	}
+}
+
+func TestVerifyCleanupAcceptsNamespaceAlreadyGone(t *testing.T) {
+	runner := &probeRunner{networkEnforced: true, namespaceGone: true}
+	report, err := testVerifier(runner).verify(context.Background(), Request{Context: "test-context"})
+	if err != nil || report.Outcome != OutcomePass || !hasCheck(report, "cleanup", StatusPass) || runner.deletedNamespace() {
+		t.Fatalf("already absent namespace did not clean up idempotently: report=%#v err=%v", report, err)
+	}
+}
+
 func TestVerifyDoesNotTreatKubectlFailureAsNetworkDenial(t *testing.T) {
 	runner := &probeRunner{negativeError: true}
 	report, err := testVerifier(runner).verify(
@@ -317,6 +406,73 @@ func TestVerifyMakesCleanupFailureFatal(t *testing.T) {
 	}
 }
 
+func TestVerifyDoesNotAcceptListenerFailureOrNetworkOutage(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		runner probeRunner
+		check  string
+	}{
+		{"listener stopped while pod remains ready", probeRunner{networkEnforced: true, listenerStopped: true}, "target-health"},
+		{"unselected path fails after policy creation", probeRunner{networkEnforced: true, unselectedFailure: true}, "unselected-positive-control"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			report, err := testVerifier(&test.runner).verify(context.Background(), Request{Context: "test-context"})
+			if err != nil || report.Outcome != OutcomeInconclusive || !hasCheck(report, test.check, StatusInconclusive) {
+				t.Fatalf("expected inconclusive live control, got report=%#v err=%v", report, err)
+			}
+			if !test.runner.deletedNamespace() {
+				t.Fatal("probe namespace was not deleted")
+			}
+		})
+	}
+}
+
+type resultRunner struct {
+	result commandResult
+	err    error
+}
+
+func (r resultRunner) run(context.Context, string, io.Reader, ...string) (commandResult, error) {
+	return r.result, r.err
+}
+
+func TestProbeOnlyAcceptsRemoteNetworkResults(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		result commandResult
+		denied bool
+	}{
+		{"timeout", commandResult{stderr: "TIMEOUT\ncommand terminated with exit code 1\n"}, true},
+		{"refused", commandResult{stderr: "REFUSED\ncommand terminated with exit code 1\n"}, true},
+		{"unreachable", commandResult{stderr: "OTHER: dial tcp 10.0.0.10:8080: connect: no route to host\ncommand terminated with exit code 1\n"}, true},
+		{"transport timeout", commandResult{stderr: "error: upstream TIMEOUT while upgrading connection"}, false},
+		{"transport refusal", commandResult{stderr: "error: REFUSED by authentication plugin"}, false},
+		{"generic other", commandResult{stderr: "OTHER: invalid exec configuration\ncommand terminated with exit code 1"}, false},
+		{"socket resources exhausted", commandResult{stderr: "OTHER: dial tcp 10.0.0.10:8080: socket: too many open files\ncommand terminated with exit code 1"}, false},
+		{"missing remote exit", commandResult{stderr: "TIMEOUT"}, false},
+		{"stdout noise", commandResult{stdout: "TIMEOUT", stderr: "command terminated with exit code 1"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			v := testVerifier(resultRunner{result: test.result, err: errors.New("exit status 1")})
+			reachable, err := v.probe(context.Background(), "test-context", "probe-namespace", "client", "10.0.0.10")
+			if reachable || (err == nil) != test.denied {
+				t.Fatalf("unexpected probe result: reachable=%v err=%v", reachable, err)
+			}
+		})
+	}
+}
+
+func TestPolicyDeadlineReportsContinuedReachabilityAsFailure(t *testing.T) {
+	v := testVerifier(resultRunner{})
+	v.now = time.Now
+	v.sleep = sleepContext
+	v.policyTimeout = 10 * time.Millisecond
+	denied, err := v.waitForDenial(context.Background(), "test-context", "namespace", "client", "10.0.0.10")
+	if denied || err != nil {
+		t.Fatalf("reachable path at convergence deadline must fail enforcement, got denied=%v err=%v", denied, err)
+	}
+}
+
 func TestProbeManifestsUseRestrictedPinnedWorkloads(t *testing.T) {
 	manifest := podManifest("paw-verify-fixed")
 	if strings.Count(manifest, "kind: Pod") != 4 {
@@ -348,7 +504,7 @@ func TestProbeManifestsPassKubectlClientValidation(t *testing.T) {
 		t.Skip("kubectl is not available")
 	}
 	manifest := strings.Join([]string{
-		namespaceManifest("paw-verify-fixed"),
+		namespaceManifest("paw-verify-fixed", "owner-token"),
 		podManifest("paw-verify-fixed"),
 		policyManifest("paw-verify-fixed"),
 	}, "---\n")
@@ -372,7 +528,7 @@ func hasCheck(report Report, name string, status Status) bool {
 
 func (r *probeRunner) deletedNamespace() bool {
 	for _, call := range r.calls {
-		if strings.Contains(strings.Join(call.args, " "), "delete namespace paw-verify-fixed") {
+		if strings.Contains(strings.Join(call.args, " "), "delete --raw=/api/v1/namespaces/paw-verify-fixed") {
 			return true
 		}
 	}
