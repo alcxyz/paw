@@ -2,7 +2,7 @@
 
 ## Architecture
 
-Read `docs/adr/README.md` and all accepted ADRs before changing architecture,
+Read `docs/adr/README.md` and relevant accepted ADRs before changing architecture,
 deployment, identity, secrets, storage, or capability boundaries.
 
 Record decisions with lasting consequences as ADRs. Keep proposed decisions
@@ -11,8 +11,6 @@ clearly distinguishable from accepted ones.
 ## Secrets
 
 - Never read, decrypt, print, log, or commit plaintext secrets.
-- Treat anything emitted by a command as potentially transmitted outside the
-  local environment.
 - `direnv` is an environment-loading convenience, not an agent sandbox.
 - Do not give the workspace decryption identities or broad static credentials.
 - Prefer short-lived, narrowly scoped workload identities and external approval
