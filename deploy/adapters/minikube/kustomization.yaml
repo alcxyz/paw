@@ -6,3 +6,13 @@ images:
   - name: registry.invalid/paw/workspace
     newName: paw-core
     newTag: dev
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: workspace
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never

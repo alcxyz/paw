@@ -169,21 +169,28 @@ ref="$2"
 object="$3"
 commit="$4"
 destination="/workspace/work/$name"
-if test -e "$destination"; then
+if test -e "$destination" || test -L "$destination"; then
   echo "repository destination $destination already exists" >&2
   exit 1
 fi
+bundle_file=""
+staging_root=""
+trap 'rm -f -- "$bundle_file"; rm -rf -- "$staging_root"' EXIT
+trap 'exit 1' HUP INT TERM
 bundle_file="$(mktemp /tmp/paw-repository.XXXXXX)"
 staging_root="$(mktemp -d /workspace/work/.paw-repository.XXXXXX)"
 staging="$staging_root/repository"
-trap 'rm -f -- "$bundle_file"; rm -rf -- "$staging_root"' EXIT
+# Import only the bundle, without recipient templates, hooks, or checkout filters.
+GIT_CONFIG_NOSYSTEM=1
+GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM GIT_CONFIG_GLOBAL
 cat >"$bundle_file"
 bundle_heads="$(git bundle list-heads "$bundle_file")"
 if test "$bundle_heads" != "$object $ref"; then
   echo "repository bundle does not match selected ref $ref at $object" >&2
   exit 1
 fi
-git -c init.defaultBranch=paw-detached init --quiet "$staging"
+git -c init.defaultBranch=paw-detached init --quiet --template= "$staging"
 git -C "$staging" bundle unbundle "$bundle_file" >/dev/null
 test "$(git -C "$staging" rev-parse --verify "$object^{commit}")" = "$commit"
 git -C "$staging" checkout --quiet --detach "$commit"

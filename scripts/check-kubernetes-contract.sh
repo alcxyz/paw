@@ -122,6 +122,8 @@ assert_security_contract "$check_dir/base.json"
 
 jq --exit-status '
   ([.[] | select(.kind == "Namespace")][0] |
+    .metadata.labels["paw.alc.xyz/managed-by"]) == "paw" and
+  ([.[] | select(.kind == "Namespace")][0] |
     .metadata.labels["pod-security.kubernetes.io/enforce"]) == "restricted" and
   ([.[] | select(.kind == "StatefulSet")] | length) == 1 and
   ([.[] | select(.kind == "StatefulSet")][0] | .spec.replicas) == 1 and
@@ -135,11 +137,15 @@ assert_security_contract "$check_dir/kubernetes.json"
 
 jq --exit-status '
   ([.[] | select(.kind == "Namespace")][0] |
+    .metadata.labels["paw.alc.xyz/managed-by"]) == "paw" and
+  ([.[] | select(.kind == "Namespace")][0] |
     .metadata.labels["pod-security.kubernetes.io/enforce"]) == "restricted" and
   ([.[] | select(.kind == "StatefulSet")] | length) == 1 and
   ([.[] | select(.kind == "StatefulSet")][0] | .spec.replicas) == 1 and
   ([.[] | select(.kind == "StatefulSet")][0] |
-    .spec.template.spec.containers[0].image) == "paw-core:dev"
+    .spec.template.spec.containers[0].image) == "paw-core:dev" and
+  ([.[] | select(.kind == "StatefulSet")][0] |
+    .spec.template.spec.containers[0].imagePullPolicy) == "Never"
 ' "$check_dir/minikube.json" >/dev/null
 
 assert_security_contract "$check_dir/minikube.json"
@@ -206,6 +212,7 @@ if [[ -n "$paw_binary" ]]; then
           .spec.template.metadata.annotations["paw.alc.xyz/profile"] == $profile and
           .spec.template.metadata.annotations["paw.alc.xyz/provider"] == $provider and
           .spec.template.spec.containers[0].image == $image and
+          .spec.template.spec.containers[0].imagePullPolicy == "Never" and
           .spec.template.spec.automountServiceAccountToken == false and
           .spec.template.spec.containers[0].securityContext.privileged == false and
           .spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true) and
@@ -234,7 +241,8 @@ if [[ -n "$paw_binary" ]]; then
           .metadata.annotations["paw.alc.xyz/provider"] == $provider and
           .spec.template.metadata.annotations["paw.alc.xyz/profile"] == $profile and
           .spec.template.metadata.annotations["paw.alc.xyz/provider"] == $provider and
-          .spec.template.spec.containers[0].image == $image) and
+          .spec.template.spec.containers[0].image == $image and
+          .spec.template.spec.containers[0].imagePullPolicy == "IfNotPresent") and
         ([.[] | select(.kind == "ConfigMap")][0] |
           .data.profile == $profile and .data.provider == $provider) and
         ([.. | strings | select(test("minikube|:dev$"; "i"))] | length) == 0
