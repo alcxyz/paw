@@ -312,6 +312,7 @@
                   ${./README.md} \
                   ${./AGENTS.md} \
                   ${./deploy}/README.md \
+                  ${./docs}/pilot.md \
                   ${./docs}/adr/*.md
                 touch "$out"
               '';

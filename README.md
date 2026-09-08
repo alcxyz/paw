@@ -15,6 +15,11 @@ requiring independently maintained deployment models.
 > decisions live in
 > [docs/adr](docs/adr/README.md).
 
+The immediate priority is a [focused pilot](docs/pilot.md): one engineer, one
+provider, one useful repository task, and continuation from multiple devices.
+Broader provider, cluster, and backend coverage follows that feedback. Existing
+security requirements remain in force; the pilot is not release qualification.
+
 ## Goals
 
 - Let multiple authenticated browser clients collaborate through one workspace.
@@ -80,6 +85,9 @@ paw workspace revoke --adapter minikube --context minikube --pairing-id ID
 paw workspace repository add --adapter minikube --context minikube \
   --source /absolute/path/to/repository --revision refs/heads/main \
   --name platform
+paw workspace repository export --adapter minikube --context minikube \
+  --name platform --base-commit FULL_IMPORTED_COMMIT_ID \
+  --output /absolute/path/to/new-review.patch
 paw workspace destroy --adapter minikube --context minikube --delete-state
 ```
 
@@ -154,6 +162,15 @@ and removes the bundle remote. Uncommitted files, Git configuration, credential
 helpers, and an ambient host mount do not enter the workspace. See
 [ADR-004](docs/adr/ADR-004-streamed-git-bundle-repository-materialization.md)
 for the decision under review and its limitations.
+
+The operator can retrieve changes with `workspace repository export`, supplying
+the full commit ID retained at import and a new absolute output path. Export
+creates a private binary-capable patch without modifying the host checkout or
+granting remote Git push. Pause editing first and deliberately stage new files;
+untracked content (including ignored files) is refused rather than silently
+omitted. Review the artifact outside the agent transcript before applying it in
+a separate checkout. Export is not a backup or secret scan. See the
+[pilot workflow](docs/pilot.md) for prerequisites and limitations.
 
 ### Nix flake
 

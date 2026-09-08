@@ -9,6 +9,7 @@
 | [ADR-005](ADR-005-portable-kubernetes-networking-and-environment-conformance.md) | Portable Kubernetes networking and environment conformance | Accepted |
 | [ADR-006](ADR-006-staged-runtime-backend-extensibility.md) | Staged runtime-backend extensibility | Accepted |
 | [ADR-007](ADR-007-workspace-lifecycle-ownership-and-readiness.md) | Workspace lifecycle ownership and readiness | Accepted |
+| [ADR-008](ADR-008-focused-pilot-and-patch-export.md) | Focused pilot and operator-controlled patch export | Accepted |
 
 ## Statuses
 
