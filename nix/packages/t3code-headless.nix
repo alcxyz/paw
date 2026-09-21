@@ -1,4 +1,5 @@
 {
+  applyPatches,
   cacert,
   fetchFromGitHub,
   fetchPnpmDeps,
@@ -10,13 +11,42 @@
   pnpm_11,
   pnpmConfigHook,
   python3,
+  rustPlatform,
+  sourceArchive ? null,
+  sourceSpec ? builtins.fromJSON (builtins.readFile ./t3code/source.json),
   stdenv,
-  t3codeFork,
+  patches ? [ ],
 }:
 
 let
-  # Reuse the tested, patched source, never the desktop package's output.
-  inherit (t3codeFork) version src resourceMonitor;
+  upstreamSrc =
+    if sourceArchive != null then
+      sourceArchive
+    else
+      fetchFromGitHub {
+        inherit (sourceSpec)
+          hash
+          owner
+          repo
+          rev
+          ;
+      };
+  src =
+    if patches == [ ] then
+      upstreamSrc
+    else
+      applyPatches {
+        name = "t3code-${sourceSpec.version}-source";
+        src = upstreamSrc;
+        inherit patches;
+      };
+  resourceMonitor = rustPlatform.buildRustPackage {
+    pname = "t3-resource-monitor";
+    inherit src;
+    inherit (sourceSpec) version cargoHash;
+    sourceRoot = "${src.name}/native/resource-monitor";
+  };
+  inherit (sourceSpec) version;
   pnpm = pnpm_11;
   nodejs = nodejs_24;
   runtimeNodejs = nodejs-slim;
@@ -62,7 +92,7 @@ stdenv.mkDerivation (finalAttrs: {
       pnpmWorkspaces
       ;
     fetcherVersion = 4;
-    hash = "sha256-dn7IRnsg+KcGMmQUFDMgNKOudA1js+PIxEGKPVGyfl0=";
+    hash = sourceSpec.pnpmDepsHash;
   };
 
   VP_SKIP_INSTALL = "1";
@@ -148,18 +178,19 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   passthru = {
-    inherit (t3codeFork)
-      sourceRevision
-      upstreamRevision
-      patchHash
-      patchRevision
+    inherit
+      patches
+      resourceMonitor
+      sourceArchive
+      sourceSpec
       ;
+    sourceRevision = sourceSpec.rev;
   };
 
   meta = {
     description = "Headless T3 Code server and web client";
-    homepage = "https://github.com/pingdotgg/t3code";
-    inherit (t3codeFork.meta) changelog;
+    homepage = "https://github.com/${sourceSpec.owner}/${sourceSpec.repo}";
+    changelog = "https://github.com/${sourceSpec.owner}/${sourceSpec.repo}/commit/${sourceSpec.rev}";
     license = lib.licenses.mit;
     mainProgram = "t3";
     platforms = lib.platforms.linux;

@@ -54,10 +54,12 @@ Do not run login until bounded provider egress and credential storage have been
 implemented and reviewed. In particular, the default Codex home must not place
 its authentication cache on the existing persistent workspace-state volume.
 
-The package baseline is Codex `0.155.1` and T3
-`0.0.42-fork.20+pa415f7130b`, from the shared source pinned in `flake.lock`.
-These are build targets, not a claim that the running browser-only workspace
-has been upgraded or that provider authentication is ready.
+The first aligned candidate used Codex `0.155.1` and T3
+`0.0.42-fork.20+pa415f7130b`. ADR-009 subsequently moved PAW's default to
+PAW-owned upstream pins; the operator's fork remains a custom build selection.
+Record the exact selected image and versions before upgrading the pilot. Neither
+this build change nor nightly update proposals upgrade the running browser-only
+workspace or establish provider authentication readiness.
 
 ### Browser-only smoke evidence (2026-09-21)
 

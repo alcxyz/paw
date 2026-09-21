@@ -10,6 +10,7 @@
 | [ADR-006](ADR-006-staged-runtime-backend-extensibility.md) | Staged runtime-backend extensibility | Accepted |
 | [ADR-007](ADR-007-workspace-lifecycle-ownership-and-readiness.md) | Workspace lifecycle ownership and readiness | Accepted |
 | [ADR-008](ADR-008-focused-pilot-and-patch-export.md) | Focused pilot and operator-controlled patch export | Accepted |
+| [ADR-009](ADR-009-portable-build-inputs-and-scheduled-updates.md) | Portable build inputs and scheduled dependency updates | Accepted |
 
 ## Statuses
 

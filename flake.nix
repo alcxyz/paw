@@ -2,16 +2,11 @@
   description = "PAW — portable AI workspaces";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  inputs.nix-packages = {
-    url = "git+https://git.alc.xyz/alcxyz/nix-packages.git?ref=dev";
-    flake = false;
-  };
 
   outputs =
     {
       self,
       nixpkgs,
-      nix-packages,
     }:
     let
       systems = [
@@ -45,8 +40,53 @@
         };
       profileMetadata =
         system: nixpkgs.lib.mapAttrs (_: value: value.metadata) (profileEvaluations system);
+      t3codeSource = builtins.fromJSON (builtins.readFile ./nix/packages/t3code/source.json);
+      codexSource = builtins.fromJSON (builtins.readFile ./nix/packages/codex-cli/source.json);
+      pawLib = {
+        mkT3codeHeadless =
+          {
+            pkgs,
+            patches ? [ ],
+            sourceArchive ? null,
+            sourceSpec ? t3codeSource,
+          }:
+          pkgs.callPackage ./nix/packages/t3code-headless.nix {
+            inherit patches sourceArchive sourceSpec;
+          };
+        mkCodexCli =
+          {
+            pkgs,
+            packageLock ? ./nix/packages/codex-cli/package-lock.json,
+            sourceSpec ? codexSource,
+          }:
+          pkgs.callPackage ./nix/packages/codex-cli {
+            inherit packageLock sourceSpec;
+          };
+        mkWorkspaceImage =
+          {
+            pkgs,
+            runtimePackages,
+            t3codeHeadless,
+            imageName ? "paw-core",
+            profileName ? "core",
+            providerPackages ? [ ],
+            providers ? [ ],
+          }:
+          pkgs.callPackage ./nix/images/paw-core.nix {
+            inherit
+              imageName
+              profileName
+              providerPackages
+              providers
+              runtimePackages
+              t3codeHeadless
+              ;
+          };
+      };
     in
     {
+      lib = pawLib;
+
       packages = forAllSystems (
         system:
         let
@@ -77,19 +117,10 @@
               mainProgram = "paw";
             };
           };
-          # Share package recipes while retaining one runtime dependency set
-          # and PAW's Linux architectures (the desktop flake has narrower outputs).
-          sharedPackages = rec {
-            codex-cli = pkgs.callPackage "${nix-packages}/pkgs/codex-cli" { };
-            t3code-fork = pkgs.callPackage "${nix-packages}/pkgs/t3code/fork.nix" {
-              inherit codex-cli;
-            };
-          };
-          t3code-headless = pkgs.callPackage ./nix/packages/t3code-headless.nix {
-            t3codeFork = sharedPackages.t3code-fork;
-          };
+          codex-cli = pawLib.mkCodexCli { inherit pkgs; };
+          t3code-headless = pawLib.mkT3codeHeadless { inherit pkgs; };
           codex-runtime = pkgs.callPackage ./nix/packages/codex-runtime.nix {
-            codexCli = sharedPackages.codex-cli;
+            codexCli = codex-cli;
           };
           t3code-headless-closure-info = pkgs.closureInfo {
             rootPaths = [ t3code-headless ];
@@ -223,7 +254,7 @@
           };
         in
         {
-          inherit paw;
+          inherit codex-cli paw;
           default = paw;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
@@ -335,6 +366,7 @@
                   ${./README.md} \
                   ${./AGENTS.md} \
                   ${./deploy}/README.md \
+                  ${./docs}/builds.md \
                   ${./docs}/pilot.md \
                   ${./docs}/adr/*.md
                 touch "$out"
@@ -343,10 +375,12 @@
           nixfmt = pkgs.runCommand "paw-nixfmt-check" { nativeBuildInputs = [ pkgs.nixfmt ]; } ''
             nixfmt --check \
               ${./flake.nix} \
+              ${./examples/custom-build.nix} \
               ${./nix/images/paw-core.nix} \
               ${./nix/images/report.nix} \
               ${./nix/lib/eval-profile.nix} \
               ${./nix/modules/profile.nix} \
+              ${./nix/packages/codex-cli/default.nix} \
               ${./nix/packages/t3code-headless.nix} \
               ${./nix/packages/codex-runtime.nix} \
               ${./nix/profiles/core.nix} \
@@ -354,6 +388,36 @@
               ${./nix/profiles/runtime-core.nix}
             touch "$out"
           '';
+
+          dependency-automation =
+            pkgs.runCommand "paw-dependency-automation-check"
+              {
+                nativeBuildInputs = with pkgs; [
+                  gitMinimal
+                  python3
+                ];
+              }
+              ''
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                python -m unittest discover -s tests -p 'test_*.py'
+                touch "$out"
+              '';
+
+          workflow-syntax =
+            pkgs.runCommand "paw-workflow-syntax-check"
+              {
+                nativeBuildInputs = [ pkgs.actionlint ];
+              }
+              ''
+                actionlint \
+                  -ignore 'undefined variable "forgejo"' \
+                  -ignore 'specifying action "https://(data.forgejo.org/actions/checkout|github.com/cachix/install-nix-action)@' \
+                  ${./.forgejo/workflows/validate.yml} \
+                  ${./.forgejo/workflows/update-dependencies.yml}
+                touch "$out"
+              '';
 
           profile-contract =
             pkgs.runCommand "paw-profile-contract-check"
@@ -416,6 +480,39 @@
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           inherit t3code-headless;
+
+          custom-build-example =
+            let
+              customVersion = "${t3codeSource.version}-custom-example";
+              customPatch = pkgs.writeText "paw-custom-t3code.patch" ''
+                diff --git a/.paw-custom-example b/.paw-custom-example
+                new file mode 100644
+                index 0000000..f2c914b
+                --- /dev/null
+                +++ b/.paw-custom-example
+                @@ -0,0 +1 @@
+                +PAW custom T3 source
+              '';
+              image = import ./examples/custom-build.nix {
+                paw = self;
+                inherit system;
+                t3codePatches = [ customPatch ];
+                t3codeSourceArchive = t3code-headless.src;
+                t3codeSourceSpec = t3codeSource // {
+                  version = customVersion;
+                };
+              };
+              customHeadless = builtins.head image.runtimeContents;
+            in
+            assert customHeadless.version == customVersion;
+            assert customHeadless.sourceRevision == t3codeSource.rev;
+            assert image.imageName == "paw-custom-codex";
+            assert image.providers == [ "codex" ];
+            assert builtins.length image.providerPackages == 1;
+            pkgs.runCommand "paw-custom-build-example-check" { } ''
+              test -f ${customHeadless.src}/.paw-custom-example
+              touch "$out"
+            '';
 
           t3code-headless-runtime-contract = pkgs.runCommand "t3code-headless-runtime-contract" { } ''
             closure_bytes=$(<${t3code-headless-closure-info}/total-nar-size)

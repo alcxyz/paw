@@ -280,6 +280,11 @@ OCI layer, release artifact, profile definition, or build log.
 
 ### 7. Reuse pinned shared T3 and Codex package recipes
 
+This section records the initial alignment implementation. Its mandatory shared
+repository dependency is superseded by
+[ADR-009](ADR-009-portable-build-inputs-and-scheduled-updates.md): PAW owns its
+build recipes and defaults to upstream, with explicit downstream overrides.
+
 PAW pins the reusable `nix-packages` repository as a source input. Its Codex
 recipe and patched T3 fork source are the version authorities for these two
 components; PAW does not independently maintain an upstream T3 version or rely

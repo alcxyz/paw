@@ -1,22 +1,5 @@
 {
   "nodes": {
-    "nix-packages": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1789965017,
-        "narHash": "sha256-Oxvfp82YUsPMWlD/j/rp2Zcuro2xUyuCItNuS3lCJ/o=",
-        "ref": "dev",
-        "rev": "c39770a81ed44414cd7a7e318e3e0caf41391be8",
-        "revCount": 611,
-        "type": "git",
-        "url": "https://git.alc.xyz/alcxyz/nix-packages.git"
-      },
-      "original": {
-        "ref": "dev",
-        "type": "git",
-        "url": "https://git.alc.xyz/alcxyz/nix-packages.git"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1787135253,
@@ -35,7 +18,6 @@
     },
     "root": {
       "inputs": {
-        "nix-packages": "nix-packages",
         "nixpkgs": "nixpkgs"
       }
     }

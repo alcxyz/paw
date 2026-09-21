@@ -376,11 +376,11 @@ executables are removed so that Codex, Claude Code, and OpenCode can be supplied
 as independent image layers. The runtime contract check enforces a 450 MiB NAR
 closure ceiling for the initial `x86_64-linux` baseline.
 
-T3's patched fork and Codex use package recipes from the shared `nix-packages`
-source pinned in `flake.lock`, evaluated with PAW's own nixpkgs. PAW builds a
-headless T3 output and a slim Codex runtime; it does not copy a desktop image,
-host configuration, or credentials. Updates are explicit lock changes followed
-by build and image-contract checks, not automatic tracking of a host install.
+PAW owns its headless T3 and provider recipes, with pinned upstream defaults and
+build-time overrides for custom forks and provider packages. It does not copy a
+desktop image, host configuration, or credentials. Nightly automation proposes
+reviewed dependency updates; it never upgrades running workspaces. See
+[build inputs and update automation](docs/builds.md).
 
 Build the provider-free core workspace image or inspect its complete size
 report:

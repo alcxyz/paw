@@ -45,6 +45,11 @@ stdenvNoCC.mkDerivation {
     runHook postInstallCheck
   '';
 
+  passthru = {
+    inherit codexCli;
+    inherit (codexCli) npmDeps packageLock sourceSpec;
+  };
+
   meta = {
     description = "Focused Codex CLI runtime for PAW workspace images";
     inherit (codexCli.meta) homepage license;
