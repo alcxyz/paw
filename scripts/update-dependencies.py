@@ -28,7 +28,7 @@ import urllib.request
 
 
 EXIT_ERROR = 1
-EXIT_DEPENDENCY_HASH = 2
+EXIT_DEPENDENCY_HASH = 20
 EXIT_PRECONDITION = 3
 
 T3_OWNER = "pingdotgg"
@@ -653,7 +653,7 @@ def argument_parser() -> argparse.ArgumentParser:
         epilog=(
             "This command does not commit, push, open pull requests, merge, publish, or deploy. "
             "Claude Code and OpenCode follow explicit flake.lock/nixpkgs updates and are not "
-            "managed here. Exit 2 specifically means required dependency-hash derivation failed."
+            "managed here. Exit 20 specifically means required dependency-hash derivation failed."
         ),
     )
     parser.add_argument(

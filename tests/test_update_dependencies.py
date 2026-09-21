@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+from contextlib import redirect_stderr
 import io
 import json
 import os
@@ -12,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts/update-dependencies.py"
@@ -369,6 +371,21 @@ class GuardTests(unittest.TestCase):
                 self.GitRunner(root, " M flake.nix\n"),
                 {"CI": "true", "PAW_DISPOSABLE_UPDATE_CHECKOUT": "1"},
             )
+
+    def test_dependency_hash_failure_has_distinct_exit_status(self):
+        root = Path("/tmp/example")
+        error = updater.DependencyHashError("missing dependency hash")
+        with mock.patch.object(updater.Updater, "propose", side_effect=error):
+            with redirect_stderr(io.StringIO()):
+                status = updater.main(
+                    [],
+                    root=root,
+                    env={"CI": "true", "PAW_DISPOSABLE_UPDATE_CHECKOUT": "1"},
+                    runner=self.GitRunner(root),
+                    http=FakeHTTP({}),
+                )
+        self.assertEqual(status, updater.EXIT_DEPENDENCY_HASH)
+        self.assertNotIn(status, {updater.EXIT_ERROR, updater.EXIT_PRECONDITION, 2})
 
 
 if __name__ == "__main__":
