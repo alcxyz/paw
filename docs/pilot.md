@@ -43,6 +43,22 @@ Provider authentication, bounded egress, and remote browser access must be
 completed before the AI task. Until then, an offline lifecycle smoke test is
 useful but is not a completed pilot.
 
+### Browser-only smoke evidence (2026-09-21)
+
+The provider-free core image was started on a dedicated Minikube v1.38.1 /
+Kubernetes v1.35.1 / containerd 2.2.1 environment. The v2 network verifier passed
+its positive controls, ingress/egress denial, target-health checks, and cleanup.
+The workspace reached readiness, its loopback HTTP endpoint returned 200, and
+pairing creation and revocation commands succeeded without displaying credentials.
+Runtime checks confirmed UID 65532 and absent service-account token and Docker
+socket mounts. No AI-provider or cross-device browser session was tested.
+
+Startup exposed containerd's rejection of absolute account-file symlinks. The
+image now materializes its generated `/etc/passwd` and `/etc/group` as regular
+files; live checks guard that compatibility requirement. The rebuilt core image
+passed its existing size and runtime contracts. This is browser-only smoke
+evidence, not a completed pilot or a new full portability qualification.
+
 ## Task acceptance
 
 1. Create and inspect the selected workspace. Confirm its profile and image.
