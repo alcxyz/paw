@@ -2,9 +2,17 @@
   description = "PAW — portable AI workspaces";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.nix-packages = {
+    url = "git+https://git.alc.xyz/alcxyz/nix-packages.git?ref=dev";
+    flake = false;
+  };
 
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      nix-packages,
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -69,7 +77,20 @@
               mainProgram = "paw";
             };
           };
-          t3code-headless = pkgs.callPackage ./nix/packages/t3code-headless.nix { };
+          # Share package recipes while retaining one runtime dependency set
+          # and PAW's Linux architectures (the desktop flake has narrower outputs).
+          sharedPackages = rec {
+            codex-cli = pkgs.callPackage "${nix-packages}/pkgs/codex-cli" { };
+            t3code-fork = pkgs.callPackage "${nix-packages}/pkgs/t3code/fork.nix" {
+              inherit codex-cli;
+            };
+          };
+          t3code-headless = pkgs.callPackage ./nix/packages/t3code-headless.nix {
+            t3codeFork = sharedPackages.t3code-fork;
+          };
+          codex-runtime = pkgs.callPackage ./nix/packages/codex-runtime.nix {
+            codexCli = sharedPackages.codex-cli;
+          };
           t3code-headless-closure-info = pkgs.closureInfo {
             rootPaths = [ t3code-headless ];
           };
@@ -79,7 +100,7 @@
           };
           paw-codex-image = pkgs.callPackage ./nix/images/paw-core.nix {
             imageName = "paw-codex";
-            providerPackages = [ pkgs.codex ];
+            providerPackages = [ codex-runtime ];
             providers = [ "codex" ];
             t3codeHeadless = t3code-headless;
             runtimePackages = (profileEvaluations system).core.runtimePackages;
@@ -107,7 +128,7 @@
           paw-platform-readonly-codex-image = pkgs.callPackage ./nix/images/paw-core.nix {
             imageName = "paw-platform-readonly-codex";
             profileName = "platform-readonly";
-            providerPackages = [ pkgs.codex ];
+            providerPackages = [ codex-runtime ];
             providers = [ "codex" ];
             t3codeHeadless = t3code-headless;
             runtimePackages = (profileEvaluations system).platform-readonly.runtimePackages;
@@ -207,6 +228,7 @@
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           inherit
+            codex-runtime
             paw-claude-code-closure-info
             paw-claude-code-image
             paw-claude-code-image-report
@@ -256,6 +278,7 @@
             builtins.toJSON self.pawProfiles.${system}
           );
           t3code-headless = self.packages.${system}.t3code-headless;
+          codex-runtime = self.packages.${system}.codex-runtime;
           t3code-headless-closure-info = self.packages.${system}.t3code-headless-closure-info;
           paw-core-closure-info = self.packages.${system}.paw-core-closure-info;
           paw-core-image-report = self.packages.${system}.paw-core-image-report;
@@ -325,6 +348,7 @@
               ${./nix/lib/eval-profile.nix} \
               ${./nix/modules/profile.nix} \
               ${./nix/packages/t3code-headless.nix} \
+              ${./nix/packages/codex-runtime.nix} \
               ${./nix/profiles/core.nix} \
               ${./nix/profiles/platform-readonly.nix} \
               ${./nix/profiles/runtime-core.nix}
@@ -417,9 +441,9 @@
             test ! -e ${t3code-headless}/bin/t3code-desktop
 
             if find ${t3code-headless}/libexec/t3code \
-              -path '*/node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-*' \
+              -path '*/node_modules/.pnpm/@anthropic-ai+claude-agent-sdk@*' \
               -print -quit | grep -q .; then
-              echo "T3 headless contains the Agent SDK's bundled Claude executable" >&2
+              echo "T3 headless contains the redundant Agent SDK runtime package" >&2
               exit 1
             fi
 
@@ -598,7 +622,7 @@
                     }' >"$out/$name/budgets.json"
                 }
 
-                ${pkgs.codex}/bin/codex --version >/dev/null
+                ${codex-runtime}/bin/codex --version >/dev/null
                 ${pkgs.claude-code}/bin/claude --version >/dev/null
                 ${pkgs.opencode}/bin/opencode --version >/dev/null
 

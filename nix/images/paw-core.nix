@@ -89,6 +89,8 @@ dockerTools.buildLayeredImage {
       "paw.alc.xyz/profile" = profileName;
       "paw.alc.xyz/provider-packages" = lib.concatStringsSep "," providerVersions;
       "paw.alc.xyz/providers" = lib.concatStringsSep "," providers;
+      "paw.alc.xyz/t3-version" = t3codeHeadless.version;
+      "paw.alc.xyz/t3-source-revision" = t3codeHeadless.sourceRevision;
     };
   };
 

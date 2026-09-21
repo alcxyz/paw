@@ -43,6 +43,22 @@ Provider authentication, bounded egress, and remote browser access must be
 completed before the AI task. Until then, an offline lifecycle smoke test is
 useful but is not a completed pilot.
 
+### Selected provider (2026-09-21)
+
+The first pilot uses Codex with a fresh ChatGPT subscription login, not an API
+key or a copied host authentication cache. The planned headless flow is
+`codex login --device-auth`, completed by the operator in their browser with
+device login enabled for their account or workspace. See the
+[official authentication documentation](https://developers.openai.com/codex/auth).
+Do not run login until bounded provider egress and credential storage have been
+implemented and reviewed. In particular, the default Codex home must not place
+its authentication cache on the existing persistent workspace-state volume.
+
+The package baseline is Codex `0.155.1` and T3
+`0.0.42-fork.20+pa415f7130b`, from the shared source pinned in `flake.lock`.
+These are build targets, not a claim that the running browser-only workspace
+has been upgraded or that provider authentication is ready.
+
 ### Browser-only smoke evidence (2026-09-21)
 
 The provider-free core image was started on a dedicated Minikube v1.38.1 /

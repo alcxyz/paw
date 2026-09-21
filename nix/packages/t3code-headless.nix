@@ -8,35 +8,24 @@
   nodejs-slim,
   nodejs_24,
   pnpm_11,
-  pnpmBuildHook,
   pnpmConfigHook,
   python3,
-  rustPlatform,
   stdenv,
+  t3codeFork,
 }:
 
 let
-  version = "0.0.33";
-  src = fetchFromGitHub {
-    owner = "pingdotgg";
-    repo = "t3code";
-    tag = "v${version}";
-    hash = "sha256-qZi9hMGzqpmnpqvvVtsQvkZIiVqTgOMWv1y15MiSAYg=";
-  };
+  # Reuse the tested, patched source, never the desktop package's output.
+  inherit (t3codeFork) version src resourceMonitor;
   pnpm = pnpm_11;
   nodejs = nodejs_24;
   runtimeNodejs = nodejs-slim;
 
-  resourceMonitor = rustPlatform.buildRustPackage {
-    pname = "t3-resource-monitor";
-    inherit version src;
-    sourceRoot = "${src.name}/native/resource-monitor";
-    cargoHash = "sha256-5cmG2daM1bVOA23gjjoalbx0fEL1hmqV6WZov0sUZp8=";
-
-    meta = {
-      description = "Native resource telemetry helper for T3 Code";
-      license = lib.licenses.mit;
-    };
+  spdxLicenseListData = fetchFromGitHub {
+    owner = "spdx";
+    repo = "license-list-data";
+    rev = "c4a7237ec8f4654e867546f9f409749300f1bf4c";
+    hash = "sha256-FbeeEBAg9ih6DkAsXdU6ruZwkC7A2u2zYBvblpl54q0=";
   };
 in
 stdenv.mkDerivation (finalAttrs: {
@@ -52,13 +41,12 @@ stdenv.mkDerivation (finalAttrs: {
     node-gyp
     nodejs
     pnpm
-    pnpmBuildHook
     pnpmConfigHook
     python3
   ];
 
   # Include T3's server and its workspace dependencies, but never the desktop
-  # application. The root and scripts packages provide the Vite+ build driver.
+  # application. Root and scripts packages provide the build/release drivers.
   pnpmWorkspaces = [
     "@t3tools/monorepo"
     "t3..."
@@ -74,7 +62,7 @@ stdenv.mkDerivation (finalAttrs: {
       pnpmWorkspaces
       ;
     fetcherVersion = 4;
-    hash = "sha256-4WbrYQs/CB+tYBR+D4k03sOR4CNsjG7qLk0Q1aPmATw=";
+    hash = "sha256-dn7IRnsg+KcGMmQUFDMgNKOudA1js+PIxEGKPVGyfl0=";
   };
 
   VP_SKIP_INSTALL = "1";
@@ -86,9 +74,12 @@ stdenv.mkDerivation (finalAttrs: {
         'const host = explicitHost || "127.0.0.1";'
     substituteInPlace package.json \
       --replace-fail \
-        '"prepare": "node scripts/clean-tsgo-backups.mjs && effect-tsgo patch && vp config --no-agent"' \
-        '"prepare": "node scripts/clean-tsgo-backups.mjs && effect-tsgo patch"'
+        ' && vp config --no-agent' \
+        ""
     printf '\nverifyDepsBeforeRun: false\n' >> pnpm-workspace.yaml
+    mkdir -p .generated/third-party-licenses/spdx
+    ln -s ${spdxLicenseListData}/json/details \
+      .generated/third-party-licenses/spdx/v3.28.0
   '';
 
   preBuild = ''
@@ -100,19 +91,12 @@ stdenv.mkDerivation (finalAttrs: {
     pnpm rebuild --pending "''${pnpmInstallFlags[@]}" --filter '!@t3tools/monorepo'
   '';
 
-  # Vite+ knows the build graph: the server build depends on the web client,
-  # while Electron and the desktop package are outside this filter.
-  pnpmBuildScript = "build:headless";
-
-  preBuildPhases = [ "addHeadlessBuildScript" ];
-  addHeadlessBuildScript = ''
-    node -e '
-      const fs = require("node:fs");
-      const path = "package.json";
-      const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
-      pkg.scripts["build:headless"] = "vp run --filter t3 build";
-      fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
-    '
+  # Build deliverables directly so a nested task failure cannot be hidden.
+  buildPhase = ''
+    runHook preBuild
+    pnpm --dir apps/web exec vp build
+    pnpm --dir apps/server exec node scripts/cli.ts build --verbose
+    runHook postBuild
   '';
 
   postBuild = ''
@@ -129,11 +113,10 @@ stdenv.mkDerivation (finalAttrs: {
     pnpm --config.inject-workspace-packages=true \
       --filter t3 deploy --prod --offline "$out/libexec/t3code"
 
-    # T3 always supplies the configured external Claude executable to the
-    # Agent SDK. Drop the SDK's optional bundled provider binary so provider
-    # executables remain separate PAW layers.
+    # The server bundles the SDK's JavaScript and supplies an external Claude
+    # executable. Drop the redundant package and any optional provider payload.
     rm -rf \
-      "$out"/libexec/t3code/node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-*/
+      "$out"/libexec/t3code/node_modules/.pnpm/@anthropic-ai+claude-agent-sdk@*/
 
     # node-pty has been built for the host. Foreign prebuilds and build-system
     # metadata are neither executable nor needed at runtime.
@@ -164,10 +147,19 @@ stdenv.mkDerivation (finalAttrs: {
     runHook postInstallCheck
   '';
 
+  passthru = {
+    inherit (t3codeFork)
+      sourceRevision
+      upstreamRevision
+      patchHash
+      patchRevision
+      ;
+  };
+
   meta = {
     description = "Headless T3 Code server and web client";
     homepage = "https://github.com/pingdotgg/t3code";
-    changelog = "https://github.com/pingdotgg/t3code/releases/tag/v${version}";
+    inherit (t3codeFork.meta) changelog;
     license = lib.licenses.mit;
     mainProgram = "t3";
     platforms = lib.platforms.linux;
