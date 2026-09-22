@@ -79,7 +79,8 @@ assert_storage_layout() {
       [.spec.template.spec.volumes[] | select(.name == "work") |
         .persistentVolumeClaim.claimName] == ["workspace-work"] and
       [.spec.template.spec.volumes[] | select(.name == "tmp") | has("emptyDir")] == [true] and
-      ([.spec.template.spec.volumes[] | select(has("emptyDir")) | .name] == ["tmp"]))
+      ([.spec.template.spec.volumes[] | select(has("emptyDir")) | .name] == ["tmp", "session"]) and
+      ([.spec.template.spec.volumes[] | select(.name == "session") | .emptyDir.medium] == ["Memory"]))
   ' "$1" >/dev/null
 }
 
@@ -233,7 +234,10 @@ jq --exit-status '
     [.spec.template.spec.volumes[] | select(.name == "work") |
       .persistentVolumeClaim.claimName] == ["workspace-work"] and
     [.spec.template.spec.volumes[] | select(.name == "tmp") | has("emptyDir")] == [true] and
-    ([.spec.template.spec.volumes[] | select(has("emptyDir")) | .name] == ["tmp"]) and
+    ([.spec.template.spec.volumes[] | select(has("emptyDir")) | .name] == ["tmp", "session"]) and
+    [.spec.template.spec.containers[0].volumeMounts[] |
+      select(.name == "session") | [.mountPath, .subPath]] ==
+      [["/workspace/session/codex", "codex"], ["/workspace/session/claude", "claude"]] and
     [.spec.template.spec.containers[0].volumeMounts[] |
       select(.name == "state") | .mountPath] == ["/workspace/state"] and
     [.spec.template.spec.containers[0].volumeMounts[] |

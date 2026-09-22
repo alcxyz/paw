@@ -79,6 +79,10 @@ dockerTools.buildLayeredImage {
       "XDG_CONFIG_HOME=/workspace/state/config"
       "XDG_DATA_HOME=/workspace/state/data"
     ]
+    # Provider login state lives on the in-memory session volume for one pod
+    # lifetime (ADR-014), never on the persistent state claim.
+    ++ lib.optional (builtins.elem "codex" providers) "CODEX_HOME=/workspace/session/codex"
+    ++ lib.optional (builtins.elem "claude-code" providers) "CLAUDE_CONFIG_DIR=/workspace/session/claude"
     # Keep Claude Code to its provider endpoints: no telemetry, error
     # reporting, update checks, or marketplace traffic under bounded egress.
     ++ lib.optional (builtins.elem "claude-code" providers) "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1";

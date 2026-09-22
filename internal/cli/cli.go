@@ -32,13 +32,14 @@ type repositoryExporter func(context.Context, repository.ExportRequest) error
 type environmentVerifier func(context.Context, environment.Request) (environment.Report, error)
 
 type dependencies struct {
-	lookPath    pathLookup
-	runCommand  commandRunner
-	runInput    inputCommandRunner
-	materialize manifestMaterializer
-	addRepo     repositoryAdder
-	exportRepo  repositoryExporter
-	verifyEnv   environmentVerifier
+	lookPath       pathLookup
+	runCommand     commandRunner
+	runInput       inputCommandRunner
+	runInteractive interactiveRunner
+	materialize    manifestMaterializer
+	addRepo        repositoryAdder
+	exportRepo     repositoryExporter
+	verifyEnv      environmentVerifier
 }
 
 // Run executes the PAW CLI and returns a process exit code.
@@ -48,13 +49,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
 	return runWithDependencies(args, stdout, stderr, dependencies{
-		lookPath:    lookPath,
-		runCommand:  executeCommand,
-		runInput:    executeCommandWithInput,
-		materialize: deployment.MaterializeManifest,
-		addRepo:     repository.Add,
-		exportRepo:  repository.Export,
-		verifyEnv:   environment.Verify,
+		lookPath:       lookPath,
+		runCommand:     executeCommand,
+		runInput:       executeCommandWithInput,
+		runInteractive: executeInteractive,
+		materialize:    deployment.MaterializeManifest,
+		addRepo:        repository.Add,
+		exportRepo:     repository.Export,
+		verifyEnv:      environment.Verify,
 	})
 }
 
@@ -197,7 +199,7 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 		return runWorkspaceRepository(args[1:], stdout, stderr, deps)
 	}
 	if len(args) == 0 || !slices.Contains(
-		[]string{"render", "create", "inspect", "connect", "pair", "revoke", "upgrade-check", "backup", "restore", "destroy"},
+		[]string{"render", "create", "inspect", "connect", "pair", "revoke", "upgrade-check", "backup", "restore", "login", "logout", "destroy"},
 		args[0],
 	) {
 		return usageError(stderr, workspaceUsage())
@@ -231,9 +233,14 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	if slices.Contains([]string{"render", "create"}, operation) && options.provider == "" {
 		return usageError(stderr, "workspace render and create require --provider")
 	}
-	if !slices.Contains([]string{"render", "create"}, operation) &&
-		(options.profile != "" || options.provider != "") {
-		return usageError(stderr, fmt.Sprintf("workspace %s does not accept --profile or --provider", operation))
+	if slices.Contains([]string{"login", "logout"}, operation) && options.provider == "" {
+		return usageError(stderr, "workspace login and logout require --provider")
+	}
+	if !slices.Contains([]string{"render", "create"}, operation) && options.profile != "" {
+		return usageError(stderr, fmt.Sprintf("workspace %s does not accept --profile", operation))
+	}
+	if !slices.Contains([]string{"render", "create", "login", "logout"}, operation) && options.provider != "" {
+		return usageError(stderr, fmt.Sprintf("workspace %s does not accept --provider", operation))
 	}
 	if operation != "pair" && (options.ttl != "" || options.label != "") {
 		return usageError(stderr, "--ttl and --label are only valid for workspace pair")
@@ -305,6 +312,8 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 		return runWorkspaceRevoke(options, stdout, stderr, deps)
 	case "destroy":
 		return runWorkspaceDestroy(options, stdout, stderr, deps)
+	case "login", "logout":
+		return runWorkspaceSession(operation, options, stdout, stderr, deps)
 	}
 
 	selection := deployment.Selection{
@@ -727,6 +736,8 @@ func workspaceUsage() string {
   paw workspace upgrade-check --adapter ADAPTER --context CONTEXT
   paw workspace backup --adapter ADAPTER --context CONTEXT --output ABSOLUTE_NEW_DIRECTORY [--helper-image-ref IMAGE@DIGEST]
   paw workspace restore --adapter ADAPTER --context CONTEXT --input ABSOLUTE_BACKUP_DIRECTORY --confirm-empty-restore [--helper-image-ref IMAGE@DIGEST]
+  paw workspace login --adapter ADAPTER --context CONTEXT --provider PROVIDER
+  paw workspace logout --adapter ADAPTER --context CONTEXT --provider PROVIDER
   paw workspace connect --adapter ADAPTER --context CONTEXT [--local-port PORT]
   paw workspace pair --adapter ADAPTER --context CONTEXT [--local-port PORT] [--ttl TTL] [--label LABEL] [--json]
   paw workspace revoke --adapter ADAPTER --context CONTEXT --pairing-id ID
@@ -743,6 +754,18 @@ func workspaceRepositoryUsage() string {
 	return `usage:
   paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME
   paw workspace repository export --adapter ADAPTER --context CONTEXT --name NAME --base-commit FULL_SHA --output ABSOLUTE_NEW_PATCH`
+}
+
+// interactiveRunner attaches the operator's terminal to a command, for
+// provider logins that print a link and read a code (ADR-014).
+type interactiveRunner func(name string, args []string) error
+
+func executeInteractive(name string, args []string) error {
+	command := exec.Command(name, args...)
+	command.Stdin = os.Stdin
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	return command.Run()
 }
 
 func executeCommand(name string, args []string, stdout, stderr io.Writer) error {

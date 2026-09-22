@@ -737,12 +737,14 @@
                     exit 1
                   fi
 
-                  # Claude Code images carry exactly one extra variable that
-                  # disables telemetry, update, and marketplace traffic.
+                  # Provider images point their login state at the in-memory
+                  # session volume (ADR-014); Claude Code images also disable
+                  # telemetry, update, and marketplace traffic.
                   extra_environment='[]'
-                  if [ "$provider" = claude-code ]; then
-                    extra_environment='["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]'
-                  fi
+                  case "$provider" in
+                    codex) extra_environment='["CODEX_HOME=/workspace/session/codex"]' ;;
+                    claude-code) extra_environment='["CLAUDE_CONFIG_DIR=/workspace/session/claude","CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]' ;;
+                  esac
                   jq --exit-status \
                     --arg name "$name" \
                     --arg provider "$provider" \
@@ -958,9 +960,10 @@
                   fi
 
                   extra_environment='[]'
-                  if [ "$provider" = claude-code ]; then
-                    extra_environment='["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]'
-                  fi
+                  case "$provider" in
+                    codex) extra_environment='["CODEX_HOME=/workspace/session/codex"]' ;;
+                    claude-code) extra_environment='["CLAUDE_CONFIG_DIR=/workspace/session/claude","CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]' ;;
+                  esac
                   jq --exit-status \
                     --arg name "$name" \
                     --arg provider "$provider" \

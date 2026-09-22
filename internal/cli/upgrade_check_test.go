@@ -249,6 +249,8 @@ func validUpgradeCheckFixture() upgradeCheckFixture {
 				{Name: "state", MountPath: "/workspace/state"},
 				{Name: "work", MountPath: "/workspace/work"},
 				{Name: "tmp", MountPath: "/tmp"},
+				{Name: "session", MountPath: "/workspace/session/codex", SubPath: "codex"},
+				{Name: "session", MountPath: "/workspace/session/claude", SubPath: "claude"},
 				{Name: "contract", MountPath: "/etc/paw", ReadOnly: true},
 			},
 		}},
@@ -256,6 +258,7 @@ func validUpgradeCheckFixture() upgradeCheckFixture {
 			{Name: "state", PersistentVolumeClaim: &persistentVolumeClaim{ClaimName: workspaceStateClaim}},
 			{Name: "work", PersistentVolumeClaim: &persistentVolumeClaim{ClaimName: workspaceWorkClaim}},
 			{Name: "tmp", EmptyDir: &struct{}{}},
+			{Name: "session", EmptyDir: &struct{}{}},
 			{Name: "contract", ConfigMap: &configMapVolume{Name: "workspace-contract"}},
 		},
 	}
