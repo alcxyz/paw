@@ -66,6 +66,10 @@ paw_binary="$2"
 local_port="${3:-43773}"
 egress_probe_host="${PAW_EGRESS_PROBE_HOST:-1.1.1.1}"
 egress_probe_port="${PAW_EGRESS_PROBE_PORT:-443}"
+# A public hostname the bounded egress proxy may be told to allow for the
+# probe; it must resolve to a public address. It is patched only into the
+# disposable workspace's destination list.
+egress_probe_name="${PAW_EGRESS_PROBE_NAME:-one.one.one.one}"
 
 [[ -n "$context" ]] || fail "CONTEXT must not be empty"
 [[ -x "$paw_binary" ]] || fail "PAW_BINARY must be an executable file"
@@ -73,6 +77,7 @@ egress_probe_port="${PAW_EGRESS_PROBE_PORT:-443}"
 ((local_port >= 1024 && local_port <= 65535)) || fail "LOCAL_PORT must be between 1024 and 65535"
 [[ "$egress_probe_host" =~ ^[A-Za-z0-9.-]+$ ]] || fail "PAW_EGRESS_PROBE_HOST contains unsupported characters"
 [[ "$egress_probe_port" =~ ^[0-9]+$ ]] || fail "PAW_EGRESS_PROBE_PORT must be numeric"
+[[ "$egress_probe_name" =~ ^[a-z0-9.-]+$ ]] || fail "PAW_EGRESS_PROBE_NAME must be a lowercase hostname"
 ((egress_probe_port >= 1 && egress_probe_port <= 65535)) || fail "PAW_EGRESS_PROBE_PORT must be between 1 and 65535"
 
 for dependency in curl git jq kubectl; do
@@ -143,9 +148,9 @@ kubectl --context "$context" --namespace "$namespace" wait \
   --context "$context" \
   --json |
   jq --exit-status '
-    (.items | length) == 4 and
+    (.items | length) == 5 and
     ([.items[].kind] | sort) ==
-      ["PersistentVolumeClaim", "Pod", "Service", "StatefulSet"]
+      ["Deployment", "PersistentVolumeClaim", "Pod", "Service", "StatefulSet"]
   ' >/dev/null
 
 kubectl --context "$context" --namespace "$namespace" get pod workspace-0 \
@@ -168,9 +173,9 @@ kubectl --context "$context" --namespace "$namespace" get pod workspace-0 \
       ((.securityContext.capabilities.add // []) | length) == 0) and
     all($containers[];
       all(.env[]?;
-        .name == "HOME" or .name == "TMPDIR" or
-        .name == "XDG_CACHE_HOME" or .name == "XDG_CONFIG_HOME" or
-        .name == "XDG_DATA_HOME"))
+        .name == "HOME" or .name == "HTTPS_PROXY" or .name == "NO_PROXY" or
+        .name == "TMPDIR" or .name == "XDG_CACHE_HOME" or
+        .name == "XDG_CONFIG_HOME" or .name == "XDG_DATA_HOME"))
   ' >/dev/null
 
 runtime_uid="$(
@@ -241,6 +246,62 @@ if [[ "$negative_result" == connected ]]; then
 fi
 positive_result="$(probe_egress egress-positive-control)" || fail "positive-control recheck could not execute"
 [[ "$positive_result" == connected ]] || fail "positive-control destination stopped responding; denial is inconclusive"
+
+# Bounded egress (ADR-013): the workspace may reach only its proxy, and the
+# proxy admits only listed hostnames on port 443. The disposable workspace's
+# destination list is patched with the probe hostname; nothing else changes.
+kubectl --context "$context" --namespace "$namespace" rollout status \
+  deployment/egress --timeout=120s >/dev/null 2>&1 || fail "egress proxy did not become ready"
+kubectl --context "$context" --namespace "$namespace" patch configmap egress-destinations \
+  --type merge --patch "{\"data\":{\"destinations\":\"$egress_probe_name live-probe\\n\"}}" >/dev/null ||
+  fail "could not patch the disposable destination list"
+kubectl --context "$context" --namespace "$namespace" rollout restart deployment/egress >/dev/null
+kubectl --context "$context" --namespace "$namespace" rollout status \
+  deployment/egress --timeout=120s >/dev/null 2>&1 || fail "egress proxy did not restart with the probe list"
+
+# Sends one CONNECT through the workspace's proxy and prints the status code.
+# $1 and $2 in the remote command belong to the remote shell.
+probe_proxy() {
+  local target=$1
+  local result
+
+  # shellcheck disable=SC2016
+  result="$(kubectl --context "$context" --namespace "$namespace" exec workspace-0 -- \
+    bash -ceu '
+      test -n "${EGRESS_SERVICE_HOST:-}" || exit 3
+      exec 3<>"/dev/tcp/$EGRESS_SERVICE_HOST/${EGRESS_SERVICE_PORT:-3128}"
+      printf "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n" "$1" "$1" >&3
+      IFS= read -r -t 10 line <&3 || exit 4
+      exec 3>&-
+      printf "%s" "$line" | tr -d "\r" | cut -d" " -f2
+    ' paw-proxy-probe "$target" 2>/dev/null)" || return 1
+  [[ "$result" =~ ^[0-9]{3}$ ]] || return 1
+  printf '%s' "$result"
+}
+
+allowed_status="$(probe_proxy "$egress_probe_name:443")" || fail "proxy probe for the listed hostname could not execute"
+[[ "$allowed_status" == 200 ]] || fail "proxy refused the listed hostname with status $allowed_status"
+unlisted_status="$(probe_proxy "example.com:443")" || fail "proxy probe for an unlisted hostname could not execute"
+[[ "$unlisted_status" == 403 ]] || fail "proxy did not refuse an unlisted hostname (status $unlisted_status)"
+port_status="$(probe_proxy "$egress_probe_name:80")" || fail "proxy probe for a non-443 port could not execute"
+[[ "$port_status" == 403 ]] || fail "proxy did not refuse port 80 (status $port_status)"
+
+# The workspace must not resolve names itself: no DNS egress exists.
+# shellcheck disable=SC2016
+dns_result="$(kubectl --context "$context" --namespace "$namespace" exec workspace-0 -- \
+  bash -ceu '
+    if timeout 5 bash -c "</dev/tcp/$1/443" 2>/dev/null; then
+      printf connected
+    else
+      printf failed
+    fi
+  ' paw-dns-probe "$egress_probe_name" 2>/dev/null)" || fail "workspace DNS probe could not execute"
+[[ "$dns_result" == failed ]] || fail "workspace resolved and reached $egress_probe_name directly; DNS egress is open"
+
+egress_log="$(kubectl --context "$context" --namespace "$namespace" logs deployment/egress 2>/dev/null)"
+printf '%s\n' "$egress_log" | grep -q '"outcome":"allowed"' || fail "proxy log lacks the allowed probe"
+printf '%s\n' "$egress_log" | grep -q '"outcome":"denied-host"' || fail "proxy log lacks the denied-host probe"
+printf '%s\n' "$egress_log" | grep -q '"outcome":"denied-port"' || fail "proxy log lacks the denied-port probe"
 
 "$paw_binary" workspace connect \
   --adapter minikube \

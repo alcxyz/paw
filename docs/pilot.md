@@ -77,6 +77,19 @@ files; live checks guard that compatibility requirement. The rebuilt core image
 passed its existing size and runtime contracts. This is browser-only smoke
 evidence, not a completed pilot or a new full portability qualification.
 
+### Bounded egress evidence (2026-09-22)
+
+The per-workspace egress proxy from
+[ADR-013](adr/ADR-013-per-workspace-bounded-egress-proxy.md) was verified on
+the same disposable Minikube, Calico-enforcing environment with the core image
+and `scripts/check-minikube-live.sh`. From the workspace pod, a listed hostname
+connected through the proxy, an unlisted hostname and a non-443 port were
+refused, a direct connection that bypassed the proxy was dropped by policy, and
+name resolution failed because the workspace has no DNS egress. The proxy log
+recorded only hostnames and outcomes. This proves the boundary for the Codex
+destination list; it does not establish provider authentication readiness,
+which still needs the credential storage decision.
+
 ## Task acceptance
 
 Runtime upgrades are a separate staged capability. New workspaces retain state

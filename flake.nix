@@ -134,6 +134,22 @@
           paw-backup-helper-image = pkgs.callPackage ./nix/images/paw-backup-helper.nix {
             helper = paw-backup-helper;
           };
+          paw-egress-proxy = pkgs.buildGoModule {
+            pname = "paw-egress-proxy";
+            version = "0.0.0-dev";
+            src = ./.;
+            vendorHash = null;
+            subPackages = [ "cmd/paw-egress-proxy" ];
+            env.CGO_ENABLED = "0";
+            ldflags = [
+              "-s"
+              "-w"
+            ];
+            doCheck = false; # The paw check runs the complete Go test suite.
+          };
+          paw-egress-proxy-image = pkgs.callPackage ./nix/images/paw-egress-proxy.nix {
+            proxy = paw-egress-proxy;
+          };
           t3code-headless = pawLib.mkT3codeHeadless { inherit pkgs; };
           codex-runtime = pkgs.callPackage ./nix/packages/codex-runtime.nix {
             codexCli = codex-cli;
@@ -270,12 +286,18 @@
           };
         in
         {
-          inherit codex-cli paw paw-backup-helper;
+          inherit
+            codex-cli
+            paw
+            paw-backup-helper
+            paw-egress-proxy
+            ;
           default = paw;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           inherit
             paw-backup-helper-image
+            paw-egress-proxy-image
             codex-runtime
             paw-claude-code-closure-info
             paw-claude-code-image
@@ -406,6 +428,7 @@
               ${./scripts/ci/sandbox-probe.nix} \
               ${./nix/images/paw-core.nix} \
               ${./nix/images/paw-backup-helper.nix} \
+              ${./nix/images/paw-egress-proxy.nix} \
               ${./nix/images/report.nix} \
               ${./nix/lib/eval-profile.nix} \
               ${./nix/modules/profile.nix} \
@@ -514,6 +537,13 @@
             image=${self.packages.${system}.paw-backup-helper-image}
             test -s "$image"
             test "$(stat -c %s "$image")" -le $((32 * 1024 * 1024))
+            touch "$out"
+          '';
+
+          egress-proxy-image = pkgs.runCommand "paw-egress-proxy-image-check" { } ''
+            image=${self.packages.${system}.paw-egress-proxy-image}
+            test -s "$image"
+            test "$(stat -c %s "$image")" -le $((16 * 1024 * 1024))
             touch "$out"
           '';
 

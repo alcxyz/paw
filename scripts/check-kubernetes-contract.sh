@@ -21,9 +21,9 @@ assert_security_contract() {
       ((.securityContext.capabilities.add // []) | length) == 0) and
     all($containers[];
       all(.env[]?;
-        .name == "HOME" or .name == "TMPDIR" or
-        .name == "XDG_CACHE_HOME" or .name == "XDG_CONFIG_HOME" or
-        .name == "XDG_DATA_HOME")) and
+        .name == "HOME" or .name == "HTTPS_PROXY" or .name == "NO_PROXY" or
+        .name == "TMPDIR" or .name == "XDG_CACHE_HOME" or
+        .name == "XDG_CONFIG_HOME" or .name == "XDG_DATA_HOME")) and
     ([.. | objects | select(has("hostPath"))] | length) == 0 and
     ([.. | objects | select(has("secretKeyRef") or has("secretRef") or
       has("serviceAccountToken"))] | length) == 0 and
@@ -91,6 +91,68 @@ expect_storage_rejection() {
     echo "storage contract accepted $description" >&2
     exit 1
   fi
+}
+
+# The per-workspace egress proxy (ADR-013): one Deployment reachable only from
+# workspace pods, reaching only DNS and public TCP 443; workspace pods reach
+# only the proxy; the destination list is the resolved purpose table.
+assert_egress_contract() {
+  jq --exit-status --arg destinations "$2" '
+    ([.[] | select(.kind == "Deployment")] | length) == 1 and
+    ([.[] | select(.kind == "Deployment")][0] |
+      .metadata.name == "egress" and
+      .metadata.labels["app.kubernetes.io/component"] == "egress" and
+      .spec.replicas == 1 and
+      .spec.template.spec.automountServiceAccountToken == false and
+      .spec.template.spec.enableServiceLinks == false and
+      .spec.template.spec.serviceAccountName == "egress" and
+      .spec.template.spec.securityContext.runAsNonRoot == true and
+      .spec.template.spec.securityContext.runAsUser == 65532 and
+      .spec.template.spec.securityContext.seccompProfile.type == "RuntimeDefault" and
+      (.spec.template.spec.containers | length) == 1 and
+      .spec.template.spec.containers[0].name == "proxy" and
+      (.spec.template.spec.containers[0].image | test("(^paw-egress-proxy:dev$|@sha256:[0-9a-f]{64}$)")) and
+      .spec.template.spec.containers[0].args ==
+        ["--listen", ":3128", "--destinations", "/etc/paw-egress/destinations"] and
+      ([.spec.template.spec.containers[0].env[]?] | length) == 0 and
+      [.spec.template.spec.containers[0].volumeMounts[] | .mountPath] == ["/etc/paw-egress"] and
+      [.spec.template.spec.volumes[] | .configMap.name] == ["egress-destinations"]) and
+    ([.[] | select(.kind == "ServiceAccount" and .metadata.name == "egress")][0] |
+      .automountServiceAccountToken == false) and
+    ([.[] | select(.kind == "Service" and .metadata.name == "egress")][0] |
+      .spec.selector["app.kubernetes.io/component"] == "egress" and
+      [.spec.ports[] | .port] == [3128]) and
+    ([.[] | select(.kind == "ConfigMap" and .metadata.name == "egress-destinations")][0] |
+      .data.destinations == $destinations) and
+    ([.[] | select(.kind == "NetworkPolicy" and .metadata.name == "egress-proxy")][0] |
+      .spec.podSelector.matchLabels["app.kubernetes.io/component"] == "egress" and
+      (.spec.policyTypes | sort) == ["Egress", "Ingress"] and
+      (.spec.ingress | length) == 1 and
+      [.spec.ingress[0].from[] | .podSelector.matchLabels["app.kubernetes.io/component"]] == ["workspace"] and
+      [.spec.ingress[0].ports[] | .port] == ["proxy"] and
+      (.spec.egress | length) == 2 and
+      [.spec.egress[0].to[] | .podSelector.matchLabels["k8s-app"]] == ["kube-dns"] and
+      [.spec.egress[0].to[] | .namespaceSelector.matchLabels["kubernetes.io/metadata.name"]] == ["kube-system"] and
+      ([.spec.egress[0].ports[] | .port] | unique) == [53] and
+      [.spec.egress[1].ports[] | .port] == [443] and
+      all(.spec.egress[1].to[]; has("ipBlock")) and
+      ([.spec.egress[1].to[] | .ipBlock.except[]] |
+        index("10.0.0.0/8") != null and index("172.16.0.0/12") != null and
+        index("192.168.0.0/16") != null and index("169.254.0.0/16") != null and
+        index("127.0.0.0/8") != null and index("fc00::/7") != null)) and
+    ([.[] | select(.kind == "NetworkPolicy" and .metadata.name == "workspace-egress-proxy")][0] |
+      .spec.podSelector.matchLabels["app.kubernetes.io/component"] == "workspace" and
+      .spec.policyTypes == ["Egress"] and
+      (.spec.egress | length) == 1 and
+      [.spec.egress[0].to[] | .podSelector.matchLabels["app.kubernetes.io/component"]] == ["egress"] and
+      [.spec.egress[0].ports[] | .port] == ["proxy"]) and
+    ([.[] | select(.kind == "StatefulSet")][0] |
+      .spec.template.spec.enableServiceLinks == true and
+      [.spec.template.spec.containers[0].env[] | select(.name == "HTTPS_PROXY") | .value] ==
+        ["http://$(EGRESS_SERVICE_HOST):$(EGRESS_SERVICE_PORT)"] and
+      [.spec.template.spec.containers[0].env[] | select(.name == "NO_PROXY") | .value] ==
+        ["localhost,127.0.0.1"])
+  ' "$1" >/dev/null
 }
 
 kubectl kustomize "$repo_root/deploy/base" >"$check_dir/base.yaml"
@@ -179,16 +241,18 @@ jq --exit-status '
     [.spec.template.spec.containers[0].volumeMounts[] |
       select(.name == "tmp") | .mountPath] == ["/tmp"]) and
   ([.[] | select(.kind == "Role")][0] | .rules) == [] and
-  ([.[] | select(.kind == "NetworkPolicy")][0] |
+  ([.[] | select(.kind == "NetworkPolicy" and .metadata.name == "workspace-default-deny")][0] |
     .spec.policyTypes | sort) == ["Egress", "Ingress"] and
-  ([.[] | select(.kind == "NetworkPolicy")][0] | .spec.ingress) == [] and
-  ([.[] | select(.kind == "NetworkPolicy")][0] | .spec.egress) == [] and
+  ([.[] | select(.kind == "NetworkPolicy" and .metadata.name == "workspace-default-deny")][0] | .spec.ingress) == [] and
+  ([.[] | select(.kind == "NetworkPolicy" and .metadata.name == "workspace-default-deny")][0] | .spec.egress) == [] and
   ([.[] | select(.kind == "Secret")] | length) == 0 and
-  ([.[] | select(.kind == "ConfigMap")][0] |
+  ([.[] | select(.kind == "ConfigMap" and .metadata.name == "workspace-contract")][0] |
     .data.profile == "core" and .data.provider == "none" and
     .data["state-policy"] == "retain-until-destroy") and
   ([.. | objects | select(has("hostPath"))] | length) == 0
 ' "$check_dir/base.json" >/dev/null
+
+assert_egress_contract "$check_dir/base.json" ""
 
 assert_security_contract "$check_dir/base.json"
 
@@ -202,10 +266,14 @@ jq --exit-status '
   ([.[] | select(.kind == "StatefulSet")][0] |
     .spec.template.spec.containers[0].image) ==
     "registry.invalid/paw/workspace@sha256:0000000000000000000000000000000000000000000000000000000000000000" and
+  ([.[] | select(.kind == "Deployment")][0] |
+    .spec.template.spec.containers[0].image) ==
+    "registry.invalid/paw/egress-proxy@sha256:0000000000000000000000000000000000000000000000000000000000000000" and
   ([.. | strings | select(test("minikube|:dev$"; "i"))] | length) == 0
 ' "$check_dir/kubernetes.json" >/dev/null
 
 assert_security_contract "$check_dir/kubernetes.json"
+assert_egress_contract "$check_dir/kubernetes.json" ""
 
 jq --exit-status '
   ([.[] | select(.kind == "Namespace")][0] |
@@ -217,10 +285,15 @@ jq --exit-status '
   ([.[] | select(.kind == "StatefulSet")][0] |
     .spec.template.spec.containers[0].image) == "paw-core:dev" and
   ([.[] | select(.kind == "StatefulSet")][0] |
+    .spec.template.spec.containers[0].imagePullPolicy) == "Never" and
+  ([.[] | select(.kind == "Deployment")][0] |
+    .spec.template.spec.containers[0].image) == "paw-egress-proxy:dev" and
+  ([.[] | select(.kind == "Deployment")][0] |
     .spec.template.spec.containers[0].imagePullPolicy) == "Never"
 ' "$check_dir/minikube.json" >/dev/null
 
 assert_security_contract "$check_dir/minikube.json"
+assert_egress_contract "$check_dir/minikube.json" ""
 
 jq 'map(if .kind == "StatefulSet" then
   .spec.template.spec.volumes +=
@@ -266,6 +339,37 @@ jq 'map(if .kind == "StatefulSet" then
   }] else . end)' "$check_dir/base.json" >"$check_dir/unsafe-init.json"
 expect_security_rejection "a privileged init container" "$check_dir/unsafe-init.json"
 
+expect_egress_rejection() {
+  local description=$1
+  local manifest=$2
+
+  if assert_egress_contract "$manifest" ""; then
+    echo "egress contract accepted $description" >&2
+    exit 1
+  fi
+}
+
+jq 'map(if .kind == "NetworkPolicy" and .metadata.name == "workspace-egress-proxy" then
+  .spec.egress += [{"to":[{"ipBlock":{"cidr":"0.0.0.0/0"}}]}]
+  else . end)' "$check_dir/base.json" >"$check_dir/open-workspace-egress.json"
+expect_egress_rejection "an open workspace egress rule" "$check_dir/open-workspace-egress.json"
+
+jq 'map(if .kind == "NetworkPolicy" and .metadata.name == "egress-proxy" then
+  .spec.egress[1].to |= map(.ipBlock.except |= map(select(. != "10.0.0.0/8")))
+  else . end)' "$check_dir/base.json" >"$check_dir/proxy-private-egress.json"
+expect_egress_rejection "proxy egress to a private range" "$check_dir/proxy-private-egress.json"
+
+jq 'map(if .kind == "NetworkPolicy" and .metadata.name == "egress-proxy" then
+  .spec.ingress[0].from = [{"namespaceSelector":{}}]
+  else . end)' "$check_dir/base.json" >"$check_dir/proxy-open-ingress.json"
+expect_egress_rejection "proxy ingress from any namespace" "$check_dir/proxy-open-ingress.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.containers[0].env |= map(
+    if .name == "HTTPS_PROXY" then .value = "http://203.0.113.9:3128" else . end)
+  else . end)' "$check_dir/base.json" >"$check_dir/foreign-proxy.json"
+expect_egress_rejection "a workspace proxy address outside the namespace service" "$check_dir/foreign-proxy.json"
+
 jq 'map(if .kind == "StatefulSet" then
   .spec.template.spec.volumes |= map(
     if .name == "work" then {"name":"work","emptyDir":{}} else . end
@@ -288,8 +392,13 @@ jq 'map(if .kind == "StatefulSet" then
 expect_storage_rejection "a StatefulSet claim template" "$check_dir/claim-template.json"
 
 if [[ -n "$paw_binary" ]]; then
+  codex_destinations=$'auth.openai.com approved-provider-api\nchatgpt.com approved-provider-api\napi.openai.com approved-provider-api\n'
   while read -r profile provider image; do
     name=${profile}-${provider}
+    destinations=""
+    if [[ "$provider" == codex ]]; then
+      destinations="$codex_destinations"
+    fi
     "$paw_binary" workspace render \
       --adapter minikube \
       --profile "$profile" \
@@ -309,26 +418,30 @@ if [[ -n "$paw_binary" ]]; then
           .spec.template.spec.automountServiceAccountToken == false and
           .spec.template.spec.containers[0].securityContext.privileged == false and
           .spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true) and
-        ([.[] | select(.kind == "ConfigMap")][0] |
+        ([.[] | select(.kind == "ConfigMap" and .metadata.name == "workspace-contract")][0] |
           .data.profile == $profile and .data.provider == $provider) and
         ([.[] | select(.kind == "Secret")] | length) == 0 and
         ([.. | objects | select(has("hostPath") or has("secretKeyRef") or
           has("secretRef") or has("serviceAccountToken"))] | length) == 0
       ' "$check_dir/$name.json" >/dev/null
     assert_security_contract "$check_dir/$name.json"
+    assert_egress_contract "$check_dir/$name.json" "$destinations"
 
     released_image="registry.example/paw/$image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    released_egress="registry.example/paw/paw-egress-proxy@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     "$paw_binary" workspace render \
       --adapter kubernetes \
       --profile "$profile" \
       --provider "$provider" \
-      --image-ref "$released_image" >"$check_dir/$name-kubernetes.yaml"
+      --image-ref "$released_image" \
+      --egress-image-ref "$released_egress" >"$check_dir/$name-kubernetes.yaml"
     yq eval-all -o=json '[.]' \
       "$check_dir/$name-kubernetes.yaml" >"$check_dir/$name-kubernetes.json"
     jq --exit-status \
       --arg profile "$profile" \
       --arg provider "$provider" \
-      --arg image "$released_image" '
+      --arg image "$released_image" \
+      --arg egress "$released_egress" '
         ([.[] | select(.kind == "StatefulSet")][0] |
           .metadata.annotations["paw.alc.xyz/profile"] == $profile and
           .metadata.annotations["paw.alc.xyz/provider"] == $provider and
@@ -336,11 +449,14 @@ if [[ -n "$paw_binary" ]]; then
           .spec.template.metadata.annotations["paw.alc.xyz/provider"] == $provider and
           .spec.template.spec.containers[0].image == $image and
           .spec.template.spec.containers[0].imagePullPolicy == "IfNotPresent") and
-        ([.[] | select(.kind == "ConfigMap")][0] |
+        ([.[] | select(.kind == "ConfigMap" and .metadata.name == "workspace-contract")][0] |
           .data.profile == $profile and .data.provider == $provider) and
+        ([.[] | select(.kind == "Deployment")][0] |
+          .spec.template.spec.containers[0].image == $egress) and
         ([.. | strings | select(test("minikube|:dev$"; "i"))] | length) == 0
       ' "$check_dir/$name-kubernetes.json" >/dev/null
     assert_security_contract "$check_dir/$name-kubernetes.json"
+    assert_egress_contract "$check_dir/$name-kubernetes.json" "$destinations"
   done <<'EOF'
 core none paw-core
 core codex paw-codex

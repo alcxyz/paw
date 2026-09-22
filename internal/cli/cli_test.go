@@ -324,6 +324,7 @@ func TestWorkspaceRenderUsesGenericKubernetesAdapterAndImmutableImage(t *testing
 		return "/manifests/kubernetes", func() {}, nil
 	}
 	image := testReleasedImage("paw-platform-readonly-codex")
+	egressImage := testReleasedImage("paw-egress-proxy")
 
 	exitCode := runWithDependencies(
 		[]string{
@@ -332,6 +333,7 @@ func TestWorkspaceRenderUsesGenericKubernetesAdapterAndImmutableImage(t *testing
 			"--profile", "platform-readonly",
 			"--provider", "codex",
 			"--image-ref", image,
+			"--egress-image-ref", egressImage,
 		},
 		&bytes.Buffer{},
 		&bytes.Buffer{},
@@ -344,7 +346,8 @@ func TestWorkspaceRenderUsesGenericKubernetesAdapterAndImmutableImage(t *testing
 			Profile:  "platform-readonly",
 			Provider: "codex",
 		},
-		ImageReference: image,
+		ImageReference:       image,
+		EgressImageReference: egressImage,
 	}
 	if exitCode != 0 || request != expectedRequest {
 		t.Fatalf("unexpected generic render: exit=%d request=%#v", exitCode, request)
@@ -358,11 +361,15 @@ func TestWorkspaceGenericRenderRequiresImmutableMatchingImage(t *testing.T) {
 	tests := []struct {
 		name     string
 		image    string
+		egress   string
 		expected string
 	}{
-		{name: "missing", expected: "requires --image-ref"},
-		{name: "mutable tag", image: "registry.example/paw/paw-core:latest", expected: "NAME@sha256"},
-		{name: "wrong composition", image: testReleasedImage("paw-codex"), expected: "does not match"},
+		{name: "missing", egress: testReleasedImage("paw-egress-proxy"), expected: "requires --image-ref"},
+		{name: "missing egress", image: testReleasedImage("paw-core"), expected: "requires --egress-image-ref"},
+		{name: "mutable tag", image: "registry.example/paw/paw-core:latest", egress: testReleasedImage("paw-egress-proxy"), expected: "NAME@sha256"},
+		{name: "wrong composition", image: testReleasedImage("paw-codex"), egress: testReleasedImage("paw-egress-proxy"), expected: "does not match"},
+		{name: "mutable egress tag", image: testReleasedImage("paw-core"), egress: "registry.example/paw/paw-egress-proxy:dev", expected: "NAME@sha256"},
+		{name: "wrong egress image", image: testReleasedImage("paw-core"), egress: testReleasedImage("paw-core"), expected: "does not match"},
 	}
 
 	for _, test := range tests {
@@ -375,6 +382,9 @@ func TestWorkspaceGenericRenderRequiresImmutableMatchingImage(t *testing.T) {
 			}
 			if test.image != "" {
 				args = append(args, "--image-ref", test.image)
+			}
+			if test.egress != "" {
+				args = append(args, "--egress-image-ref", test.egress)
 			}
 			var stderr bytes.Buffer
 			exitCode := runWithDependencies(
@@ -562,6 +572,7 @@ func TestWorkspaceInspectUsesExactResources(t *testing.T) {
 		"pod/workspace-0",
 		"persistentvolumeclaim/workspace-state",
 		"service/t3",
+		"deployment/egress",
 		"--output", "json",
 	}
 	if exitCode != 0 || !slices.Equal(commandArgs, expected) {
