@@ -31,6 +31,46 @@ func TestMaterializeRejectsUnknownAdapter(t *testing.T) {
 	}
 }
 
+func TestMaterializeIncludesPersistentWorkspaceStorageLayout(t *testing.T) {
+	path, cleanup, err := Materialize("minikube")
+	if err != nil {
+		t.Fatalf("Materialize returned an error: %v", err)
+	}
+	defer cleanup()
+
+	base := filepath.Join(path, "..", "..", "base")
+	checks := map[string][]string{
+		"configmap.yaml": {
+			"state-policy: retain-until-destroy",
+		},
+		"pvc.yaml": {
+			"name: workspace-state",
+			"name: workspace-work",
+			"paw.alc.xyz/managed-by: paw",
+			"paw.alc.xyz/state-policy: retain-until-destroy",
+			"storage: 10Gi",
+		},
+		"statefulset.yaml": {
+			"paw.alc.xyz/storage-layout: persistent-v1",
+			"claimName: workspace-state",
+			"claimName: workspace-work",
+			"mountPath: /tmp",
+		},
+	}
+
+	for name, expectedStrings := range checks {
+		content, readErr := os.ReadFile(filepath.Join(base, name))
+		if readErr != nil {
+			t.Fatalf("read materialized %s: %v", name, readErr)
+		}
+		for _, expected := range expectedStrings {
+			if !strings.Contains(string(content), expected) {
+				t.Fatalf("materialized %s does not contain %q:\n%s", name, expected, content)
+			}
+		}
+	}
+}
+
 func TestSupportedAdapters(t *testing.T) {
 	for _, adapter := range []string{AdapterKubernetes, AdapterMinikube} {
 		if !SupportsAdapter(adapter) {

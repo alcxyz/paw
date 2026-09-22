@@ -10,6 +10,7 @@ metadata:
     paw.alc.xyz/profile: core
     paw.alc.xyz/provider: none
     paw.alc.xyz/single-writer: "true"
+    paw.alc.xyz/storage-layout: persistent-v1
 spec:
   replicas: 1
   serviceName: t3-headless
@@ -26,6 +27,7 @@ spec:
         paw.alc.xyz/contract-version: v0
         paw.alc.xyz/profile: core
         paw.alc.xyz/provider: none
+        paw.alc.xyz/storage-layout: persistent-v1
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
@@ -116,7 +118,8 @@ spec:
           persistentVolumeClaim:
             claimName: workspace-state
         - name: work
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: workspace-work
         - name: tmp
           emptyDir: {}
         - name: contract

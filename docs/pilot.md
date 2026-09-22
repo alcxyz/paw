@@ -79,6 +79,10 @@ evidence, not a completed pilot or a new full portability qualification.
 
 ## Task acceptance
 
+Runtime upgrades are a separate staged capability. New workspaces retain state
+and repository volumes; earlier workspaces need explicit migration. Follow
+[the upgrade guide](upgrades.md), not destroy/recreate, when preserving work.
+
 1. Create and inspect the selected workspace. Confirm its profile and image.
 2. Import the selected named repository revision using
    `paw workspace repository add`; record the returned commit ID outside the
