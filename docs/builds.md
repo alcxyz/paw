@@ -79,18 +79,24 @@ a Kubernetes cluster, log into a provider, or deploy an image.
 Prepare changed pins only in a clean, disposable checkout:
 
 ```sh
-CI=true PAW_DISPOSABLE_UPDATE_CHECKOUT=1 python3 scripts/update-dependencies.py
+CI=true PAW_DISPOSABLE_UPDATE_CHECKOUT=1 \
+  nix shell --no-update-lock-file --inputs-from . nixpkgs#python3 \
+    --command python3 scripts/update-dependencies.py
 bash scripts/ci/check.sh
 git diff -- nix/packages
 ```
 
-For read-only release discovery without changing files or fetching/building Nix
-dependencies, use `python3 scripts/update-dependencies.py --check`. This mode
-does not require a disposable checkout.
+For read-only release discovery without changing pins or building candidate
+dependencies, use
+`nix shell --no-update-lock-file --inputs-from . nixpkgs#python3 --command
+python3 scripts/update-dependencies.py --check`. This mode does not require a
+disposable checkout.
 
-The updater needs Nix and Python. It obtains npm from PAW's pinned nixpkgs when
-regenerating the Codex lock, with lifecycle scripts disabled and temporary npm
-configuration/cache. It accesses public upstream release metadata and archives.
+The updater needs Nix and uses Python from PAW's pinned nixpkgs so safe archive
+extraction does not depend on the runner or host Python version. It also obtains
+npm from the same pinned nixpkgs when regenerating the Codex lock, with lifecycle
+scripts disabled and temporary npm configuration/cache. It accesses public
+upstream release metadata and archives.
 Review the diff even when hashes and builds pass: a content hash is not a review
 of upstream behavior. Discovery errors are failures, not evidence that pins are
 current. Custom T3 repositories are not silently reset to upstream by the

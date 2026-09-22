@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # No live-cluster or authenticated provider operations belong in build CI.
-python3 -m unittest discover -s tests -p 'test_*.py'
+# The dependency-automation flake check runs the Python suite with pinned Python.
 nix flake check --no-update-lock-file
 
 # Evaluate the second Linux architecture; native ARM builds remain a release

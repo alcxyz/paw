@@ -28,6 +28,8 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("if: forgejo.ref == 'refs/heads/dev'", text)
         self.assertIn("cancel-in-progress: false", text)
         self.assertIn("scripts/ci/publish-update.py --check-open", text)
+        self.assertIn("--inputs-from . nixpkgs#python3", text)
+        self.assertIn("--command python3 scripts/update-dependencies.py", text)
         self.assertIn("if: steps.pending.outputs.open != 'true'", text)
         self.assertLess(text.index("run: bash scripts/ci/check.sh"),
                         text.index("- name: Open dependency review"))
