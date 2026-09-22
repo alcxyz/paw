@@ -21,6 +21,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             self.assertNotIn("secrets.", text)
             self.assertNotIn("continue-on-error", text)
             self.assertIn("sandbox = true", text)
+            self.assertIn("sandbox-fallback = false", text)
 
     def test_schedule_is_proposal_only(self):
         text = (ROOT / ".forgejo/workflows/update-dependencies.yml").read_text()

@@ -104,6 +104,11 @@ default update command.
 
 ## Nightly proposals
 
+CI requires a runner that supports Nix's sandbox namespaces. Both workflows
+disable sandbox fallback: an incompatible runner must fail, not silently build
+without the isolation required by ADR-009. A generic container runner label
+alone does not establish this capability.
+
 `.forgejo/workflows/update-dependencies.yml` runs at **03:17 UTC** and supports
 manual dispatch from `dev`. It:
 
