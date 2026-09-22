@@ -181,6 +181,7 @@ type workspaceOptions struct {
 	context             string
 	deleteState         bool
 	imageRef            string
+	egressImageRef      string
 	helperImageRef      string
 	jsonOutput          bool
 	label               string
@@ -252,6 +253,9 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	if !slices.Contains([]string{"render", "create"}, operation) && options.imageRef != "" {
 		return usageError(stderr, "--image-ref is only valid for workspace render and create")
 	}
+	if !slices.Contains([]string{"render", "create"}, operation) && options.egressImageRef != "" {
+		return usageError(stderr, "--egress-image-ref is only valid for workspace render and create")
+	}
 	if operation != "backup" && options.backupOutput != "" {
 		return usageError(stderr, "--output is only valid for workspace backup")
 	}
@@ -314,18 +318,31 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 		slices.Contains([]string{"render", "create"}, operation) && options.imageRef == "" {
 		return usageError(stderr, "adapter kubernetes requires --image-ref for workspace render and create")
 	}
+	if options.adapter == deployment.AdapterKubernetes &&
+		slices.Contains([]string{"render", "create"}, operation) && options.egressImageRef == "" {
+		return usageError(stderr, "adapter kubernetes requires --egress-image-ref for workspace render and create")
+	}
 	if options.adapter == deployment.AdapterMinikube && options.imageRef != "" {
 		return usageError(stderr, "adapter minikube does not accept --image-ref")
+	}
+	if options.adapter == deployment.AdapterMinikube && options.egressImageRef != "" {
+		return usageError(stderr, "adapter minikube does not accept --egress-image-ref")
 	}
 	if options.imageRef != "" {
 		if _, _, err := deployment.ValidateReleasedImageReference(selection, options.imageRef); err != nil {
 			return usageError(stderr, err.Error())
 		}
 	}
+	if options.egressImageRef != "" {
+		if _, _, err := deployment.ValidateEgressImageReference(options.egressImageRef); err != nil {
+			return usageError(stderr, err.Error())
+		}
+	}
 	manifestPath, cleanup, err := deps.materialize(deployment.ManifestRequest{
-		Adapter:        options.adapter,
-		Selection:      selection,
-		ImageReference: options.imageRef,
+		Adapter:              options.adapter,
+		Selection:            selection,
+		ImageReference:       options.imageRef,
+		EgressImageReference: options.egressImageRef,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "paw: %v\n", err)
@@ -470,6 +487,7 @@ func runWorkspaceInspect(options workspaceOptions, stdout, stderr io.Writer, dep
 		"pod/workspace-0",
 		"persistentvolumeclaim/workspace-state",
 		"service/t3",
+		"deployment/egress",
 		"--output", output,
 	}
 	return runKubectl("inspect", args, stdout, stderr, deps)
@@ -613,6 +631,15 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 				return workspaceOptions{}, fmt.Errorf("--image-ref may only be specified once")
 			}
 			result.imageRef = args[index]
+		case "--egress-image-ref":
+			index++
+			if optionValueMissing(args, index) {
+				return workspaceOptions{}, fmt.Errorf("--egress-image-ref requires a value")
+			}
+			if result.egressImageRef != "" {
+				return workspaceOptions{}, fmt.Errorf("--egress-image-ref may only be specified once")
+			}
+			result.egressImageRef = args[index]
 		case "--delete-state":
 			if result.deleteState {
 				return workspaceOptions{}, fmt.Errorf("--delete-state may only be specified once")
@@ -694,8 +721,8 @@ func optionValueMissing(args []string, index int) bool {
 
 func workspaceUsage() string {
 	return `usage:
-  paw workspace render --adapter ADAPTER --profile PROFILE --provider PROVIDER [--image-ref IMAGE@DIGEST]
-  paw workspace create --adapter ADAPTER --context CONTEXT --profile PROFILE --provider PROVIDER [--image-ref IMAGE@DIGEST]
+  paw workspace render --adapter ADAPTER --profile PROFILE --provider PROVIDER [--image-ref IMAGE@DIGEST --egress-image-ref IMAGE@DIGEST]
+  paw workspace create --adapter ADAPTER --context CONTEXT --profile PROFILE --provider PROVIDER [--image-ref IMAGE@DIGEST --egress-image-ref IMAGE@DIGEST]
   paw workspace inspect --adapter ADAPTER --context CONTEXT [--json]
   paw workspace upgrade-check --adapter ADAPTER --context CONTEXT
   paw workspace backup --adapter ADAPTER --context CONTEXT --output ABSOLUTE_NEW_DIRECTORY [--helper-image-ref IMAGE@DIGEST]
@@ -707,8 +734,9 @@ func workspaceUsage() string {
   paw workspace repository export --adapter ADAPTER --context CONTEXT --name NAME --base-commit FULL_SHA --output ABSOLUTE_NEW_PATCH
   paw workspace destroy --adapter ADAPTER --context CONTEXT --delete-state
 
-ADAPTER is kubernetes or minikube. The kubernetes adapter requires an immutable
---image-ref for render and create; minikube uses the reviewed local :dev image.`
+ADAPTER is kubernetes or minikube. The kubernetes adapter requires immutable
+--image-ref and --egress-image-ref values for render and create; minikube uses
+the reviewed local :dev images.`
 }
 
 func workspaceRepositoryUsage() string {

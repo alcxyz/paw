@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -46,7 +47,13 @@ type ManifestRequest struct {
 	Adapter        string
 	Selection      Selection
 	ImageReference string
+	// EgressImageReference is the immutable egress proxy image for the generic
+	// Kubernetes adapter. Minikube binds the local paw-egress-proxy:dev image.
+	EgressImageReference string
 }
+
+// EgressImageName is the reviewed image name of the per-workspace egress proxy.
+const EgressImageName = "paw-egress-proxy"
 
 var imageNames = map[Selection]string{
 	{Profile: "core", Provider: "none"}:                     "paw-core",
@@ -86,6 +93,16 @@ func ValidateReleasedImageReference(selection Selection, reference string) (stri
 	if err != nil {
 		return "", "", err
 	}
+	return validateImmutableReference(expected, reference)
+}
+
+// ValidateEgressImageReference validates an immutable OCI image reference for
+// the per-workspace egress proxy image.
+func ValidateEgressImageReference(reference string) (string, string, error) {
+	return validateImmutableReference(EgressImageName, reference)
+}
+
+func validateImmutableReference(expected, reference string) (string, string, error) {
 	if strings.ContainsAny(reference, " \t\r\n") || strings.Contains(reference, "://") {
 		return "", "", fmt.Errorf("released image must be an OCI reference without a URL scheme")
 	}
@@ -129,12 +146,19 @@ func MaterializeManifest(request ManifestRequest) (string, func(), error) {
 	if !SupportsAdapter(request.Adapter) {
 		return "", func() {}, fmt.Errorf("unsupported adapter %q", request.Adapter)
 	}
-	if request.Adapter == AdapterMinikube && request.ImageReference != "" {
+	if request.Adapter == AdapterMinikube && (request.ImageReference != "" || request.EgressImageReference != "") {
 		return "", func() {}, fmt.Errorf("adapter %q does not accept a released image", request.Adapter)
+	}
+	if request.Adapter == AdapterKubernetes && request.ImageReference != "" && request.EgressImageReference == "" {
+		return "", func() {}, fmt.Errorf("adapter %q requires a released egress proxy image", request.Adapter)
 	}
 
 	selection := request.Selection
 	image, err := ImageName(selection)
+	if err != nil {
+		return "", func() {}, err
+	}
+	destinations, err := EgressDestinations(selection)
 	if err != nil {
 		return "", func() {}, err
 	}
@@ -195,11 +219,19 @@ func MaterializeManifest(request ManifestRequest) (string, func(), error) {
 			cleanup()
 			return "", func() {}, validationErr
 		}
+		egressRepository, egressDigest, validationErr := ValidateEgressImageReference(request.EgressImageReference)
+		if validationErr != nil {
+			cleanup()
+			return "", func() {}, validationErr
+		}
 		configured += fmt.Sprintf(`images:
   - name: registry.invalid/paw/workspace
     newName: %s
     digest: %s
-`, repository, digest)
+  - name: registry.invalid/paw/egress-proxy
+    newName: %s
+    digest: %s
+`, repository, digest, egressRepository, egressDigest)
 	}
 	// Minikube already declares its local-only image-pull patch. Append the
 	// composition patches to that list rather than emitting a duplicate key.
@@ -235,8 +267,16 @@ func MaterializeManifest(request ManifestRequest) (string, func(), error) {
       - op: replace
         path: /data/provider
         value: %s
+  - target:
+      version: v1
+      kind: ConfigMap
+      name: egress-destinations
+    patch: |-
+      - op: replace
+        path: /data/destinations
+        value: %s
 `, selection.Profile, selection.Provider, selection.Profile, selection.Provider,
-		selection.Profile, selection.Provider)
+		selection.Profile, selection.Provider, strconv.Quote(EgressDestinationsText(destinations)))
 	if err := os.WriteFile(kustomizationPath, []byte(configured), 0o644); err != nil {
 		cleanup()
 		return "", func() {}, fmt.Errorf("write adapter kustomization: %w", err)
