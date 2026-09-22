@@ -393,11 +393,14 @@ expect_storage_rejection "a StatefulSet claim template" "$check_dir/claim-templa
 
 if [[ -n "$paw_binary" ]]; then
   codex_destinations=$'auth.openai.com approved-provider-api\nchatgpt.com approved-provider-api\napi.openai.com approved-provider-api\n'
+  claude_code_destinations=$'claude.ai approved-provider-api\nplatform.claude.com approved-provider-api\napi.anthropic.com approved-provider-api\n'
   while read -r profile provider image; do
     name=${profile}-${provider}
     destinations=""
     if [[ "$provider" == codex ]]; then
       destinations="$codex_destinations"
+    elif [[ "$provider" == claude-code ]]; then
+      destinations="$claude_code_destinations"
     fi
     "$paw_binary" workspace render \
       --adapter minikube \

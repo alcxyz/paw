@@ -737,9 +737,17 @@
                     exit 1
                   fi
 
+                  # Claude Code images carry exactly one extra variable that
+                  # disables telemetry, update, and marketplace traffic.
+                  extra_environment='[]'
+                  if [ "$provider" = claude-code ]; then
+                    extra_environment='["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]'
+                  fi
                   jq --exit-status \
                     --arg name "$name" \
-                    --arg provider "$provider" '
+                    --arg provider "$provider" \
+                    --argjson extra "$extra_environment" '
+                      . as $root |
                       .image.name == $name and
                       .image.architecture == "amd64" and
                       .image.runtime.user == "65532:65532" and
@@ -748,8 +756,11 @@
                       .image.runtime.labels["paw.alc.xyz/providers"] == $provider and
                       (.image.runtime.labels["paw.alc.xyz/provider-packages"] | length) > 0 and
                       (.image.runtime.environment | map(split("=")[0]) | sort) ==
-                        ["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME",
-                          "XDG_CONFIG_HOME", "XDG_DATA_HOME"] and
+                        ((["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME",
+                          "XDG_CONFIG_HOME", "XDG_DATA_HOME"] +
+                          ($extra | map(split("=")[0]))) | sort) and
+                      all($extra[]; . as $entry |
+                        ($root.image.runtime.environment | index($entry)) != null) and
                       .image.runtime.command[0:5] ==
                         ["--log-level", "warn", "start", "--mode", "web"]
                     ' "$report" >/dev/null
@@ -946,9 +957,15 @@
                     exit 1
                   fi
 
+                  extra_environment='[]'
+                  if [ "$provider" = claude-code ]; then
+                    extra_environment='["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]'
+                  fi
                   jq --exit-status \
                     --arg name "$name" \
-                    --arg provider "$provider" '
+                    --arg provider "$provider" \
+                    --argjson extra "$extra_environment" '
+                      . as $root |
                       .image.name == $name and
                       .image.architecture == "amd64" and
                       .image.runtime.user == "65532:65532" and
@@ -958,8 +975,11 @@
                       .image.runtime.labels["paw.alc.xyz/providers"] == $provider and
                       (.image.runtime.labels["paw.alc.xyz/provider-packages"] | length) > 0 and
                       (.image.runtime.environment | map(split("=")[0]) | sort) ==
-                        ["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME",
-                          "XDG_CONFIG_HOME", "XDG_DATA_HOME"] and
+                        ((["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME",
+                          "XDG_CONFIG_HOME", "XDG_DATA_HOME"] +
+                          ($extra | map(split("=")[0]))) | sort) and
+                      all($extra[]; . as $entry |
+                        ($root.image.runtime.environment | index($entry)) != null) and
                       .image.runtime.command[0:5] ==
                         ["--log-level", "warn", "start", "--mode", "web"]
                     ' "$report" >/dev/null

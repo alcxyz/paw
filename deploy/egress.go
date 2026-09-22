@@ -31,8 +31,18 @@ var providerDestinations = map[string][]EgressDestination{
 		{Host: "chatgpt.com", Purpose: PurposeApprovedProviderAPI},
 		{Host: "api.openai.com", Purpose: PurposeApprovedProviderAPI},
 	},
-	"claude-code": nil,
-	"opencode":    nil,
+	// Claude Code with a subscription login: claude.ai starts the OAuth flow,
+	// platform.claude.com exchanges and refreshes tokens, and api.anthropic.com
+	// serves requests. The image disables nonessential traffic (telemetry,
+	// update checks, marketplace) so no other hosts are needed. WebFetch
+	// fetches from the workspace itself and stays blocked until a browse
+	// purpose is reviewed; web search runs on the provider side.
+	"claude-code": {
+		{Host: "claude.ai", Purpose: PurposeApprovedProviderAPI},
+		{Host: "platform.claude.com", Purpose: PurposeApprovedProviderAPI},
+		{Host: "api.anthropic.com", Purpose: PurposeApprovedProviderAPI},
+	},
+	"opencode": nil,
 }
 
 // EgressDestinations resolves the reviewed destination list for a selection.
