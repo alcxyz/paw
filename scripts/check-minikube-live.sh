@@ -179,6 +179,8 @@ runtime_uid="$(
 [[ "$runtime_uid" == "65532" ]] || fail "workspace process is not running as UID 65532"
 
 kubectl --context "$context" --namespace "$namespace" exec workspace-0 -- sh -c '
+  test -f /etc/passwd && test ! -L /etc/passwd &&
+  test -f /etc/group && test ! -L /etc/group &&
   test ! -e /var/run/secrets/kubernetes.io/serviceaccount &&
   test ! -S /var/run/docker.sock &&
   test ! -S /run/containerd/containerd.sock &&

@@ -9,15 +9,16 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
-	deployment "git.alc.xyz/alcxyz/paw/deploy"
-	"git.alc.xyz/alcxyz/paw/internal/environment"
-	"git.alc.xyz/alcxyz/paw/internal/repository"
+	deployment "github.com/alcxyz/paw/deploy"
+	"github.com/alcxyz/paw/internal/environment"
+	"github.com/alcxyz/paw/internal/repository"
 )
 
 const testImageDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -862,6 +863,82 @@ func TestWorkspaceRepositoryOptionsDoNotConsumeAnotherFlagAsAValue(t *testing.T)
 	}
 }
 
+func TestWorkspaceRepositoryExportUsesExplicitSelection(t *testing.T) {
+	baseCommit := strings.Repeat("a", 40)
+	output := filepath.Join(t.TempDir(), "changes.patch")
+	var actual repository.ExportRequest
+	deps := workspaceTestDependencies(nil)
+	deps.exportRepo = func(_ context.Context, request repository.ExportRequest) error {
+		actual = request
+		return nil
+	}
+	var stdout bytes.Buffer
+
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "repository", "export",
+			"--adapter", "minikube",
+			"--context", "paw-local",
+			"--name", "platform",
+			"--base-commit", baseCommit,
+			"--output", output,
+		},
+		&stdout,
+		&bytes.Buffer{},
+		deps,
+	)
+
+	expected := repository.ExportRequest{
+		BaseCommit: baseCommit,
+		Context:    "paw-local",
+		Name:       "platform",
+		Output:     output,
+	}
+	if exitCode != 0 || actual != expected {
+		t.Fatalf("unexpected repository export request: exit=%d request=%#v", exitCode, actual)
+	}
+	if !strings.Contains(stdout.String(), "repository platform exported") || !strings.Contains(stdout.String(), output) {
+		t.Fatalf("missing repository export metadata: %q", stdout.String())
+	}
+}
+
+func TestWorkspaceRepositoryExportRequiresCompleteSelection(t *testing.T) {
+	var stderr bytes.Buffer
+	exitCode := runWithDependencies(
+		[]string{
+			"workspace", "repository", "export",
+			"--adapter", "kubernetes",
+			"--context", "paw-local",
+			"--name", "platform",
+			"--output", filepath.Join(t.TempDir(), "changes.patch"),
+		},
+		io.Discard,
+		&stderr,
+		workspaceTestDependencies(nil),
+	)
+
+	if exitCode != 2 || !strings.Contains(stderr.String(), "--base-commit FULL_SHA") {
+		t.Fatalf("expected complete export selection error, got %d and %q", exitCode, stderr.String())
+	}
+}
+
+func TestWorkspaceRepositoryExportOptionsDoNotConsumeAnotherFlagAsAValue(t *testing.T) {
+	for _, option := range []string{"--adapter", "--base-commit", "--context", "--name", "--output"} {
+		t.Run(option, func(t *testing.T) {
+			var stderr bytes.Buffer
+			exitCode := runWithDependencies(
+				[]string{"workspace", "repository", "export", option, "--context"},
+				io.Discard,
+				&stderr,
+				workspaceTestDependencies(nil),
+			)
+			if exitCode != 2 || !strings.Contains(stderr.String(), option+" requires a value") {
+				t.Fatalf("expected missing value error for %s, got %d and %q", option, exitCode, stderr.String())
+			}
+		})
+	}
+}
+
 func TestWorkspaceReportsKubectlFailure(t *testing.T) {
 	deps := workspaceTestDependencies(func(string, []string, io.Writer, io.Writer) error {
 		return errors.New("command failed")
@@ -902,6 +979,9 @@ func workspaceTestDependencies(runner commandRunner) dependencies {
 		},
 		addRepo: func(repository.Request, io.Writer, io.Writer) error {
 			return fmt.Errorf("unexpected repository materialization")
+		},
+		exportRepo: func(context.Context, repository.ExportRequest) error {
+			return fmt.Errorf("unexpected repository export")
 		},
 		verifyEnv: func(_ context.Context, _ environment.Request) (environment.Report, error) {
 			return environment.Report{Outcome: environment.OutcomePass}, nil

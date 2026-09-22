@@ -1,0 +1,28 @@
+name: Validate PAW
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned sandboxed Nix daemon
+        env:
+          GITHUB_TOKEN: ""
+        run: bash scripts/ci/install-nix.sh
+      - name: Validate pinned build and image contracts
+        env:
+          GITHUB_TOKEN: ""
+        run: bash scripts/ci/check.sh

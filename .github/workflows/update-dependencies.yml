@@ -1,0 +1,76 @@
+name: Propose dependency updates
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: paw-dependency-updates
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  propose:
+    # Dispatch is deliberately limited to the reviewed integration branch.
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: dev
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Preserve any pending dependency review
+        id: pending
+        env:
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BASE_BRANCH: dev
+        run: python3 scripts/ci/publish-update.py --check-open
+      - name: Install pinned sandboxed Nix daemon
+        if: steps.pending.outputs.open != 'true'
+        env:
+          GITHUB_TOKEN: ""
+        run: bash scripts/ci/install-nix.sh
+      - name: Verify local Nix sandbox capability
+        if: steps.pending.outputs.open != 'true'
+        env:
+          GITHUB_TOKEN: ""
+        run: bash scripts/ci/check-sandbox.sh
+      - name: Discover stable releases and resolve candidate hashes
+        if: steps.pending.outputs.open != 'true'
+        id: candidate
+        env:
+          PAW_DISPOSABLE_UPDATE_CHECKOUT: "1"
+          GITHUB_TOKEN: ""
+        run: |
+          nix shell --no-update-lock-file --inputs-from . nixpkgs#python3 \
+            --command python3 scripts/update-dependencies.py
+          if git diff --quiet -- nix/packages; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Validate candidate before proposing it
+        if: steps.candidate.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ""
+        run: bash scripts/ci/check.sh
+      - name: Open dependency review
+        if: steps.candidate.outputs.changed == 'true'
+        env:
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BASE_BRANCH: dev
+        run: python3 scripts/ci/publish-update.py

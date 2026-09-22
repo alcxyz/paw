@@ -14,18 +14,19 @@ assert builtins.length providerPackages == builtins.length providers;
 let
   uid = 65532;
   gid = 65532;
+  accountFiles = dockerTools.fakeNss.override {
+    extraPasswdLines = [
+      "paw:x:${toString uid}:${toString gid}:PAW workspace:/workspace/state/home:/bin/sh"
+    ];
+    extraGroupLines = [ "paw:x:${toString gid}:" ];
+  };
   providerVersions = map (
     package: "${package.pname or (lib.getName package)}-${package.version or "unknown"}"
   ) providerPackages;
   runtimeContents = [
     t3codeHeadless
     dockerTools.binSh
-    (dockerTools.fakeNss.override {
-      extraPasswdLines = [
-        "paw:x:${toString uid}:${toString gid}:PAW workspace:/workspace/state/home:/bin/sh"
-      ];
-      extraGroupLines = [ "paw:x:${toString gid}:" ];
-    })
+    accountFiles
   ]
   ++ runtimePackages
   ++ providerPackages;
@@ -39,6 +40,13 @@ dockerTools.buildLayeredImage {
 
   extraCommands = ''
     mkdir -p tmp workspace/state/home workspace/work
+    # containerd 2.2 user/group lookup rejects absolute account-file symlinks.
+    # Keep the generated identities, but materialize them in the image root.
+    for account_file in passwd group; do
+      cp --remove-destination ${accountFiles}/etc/"$account_file" etc/"$account_file"
+      chmod 0444 etc/"$account_file"
+      test -f etc/"$account_file" && test ! -L etc/"$account_file"
+    done
   '';
   fakeRootCommands = ''
     chown -R ${toString uid}:${toString gid} tmp workspace
@@ -81,6 +89,8 @@ dockerTools.buildLayeredImage {
       "paw.alc.xyz/profile" = profileName;
       "paw.alc.xyz/provider-packages" = lib.concatStringsSep "," providerVersions;
       "paw.alc.xyz/providers" = lib.concatStringsSep "," providers;
+      "paw.alc.xyz/t3-version" = t3codeHeadless.version;
+      "paw.alc.xyz/t3-source-revision" = t3codeHeadless.sourceRevision;
     };
   };
 

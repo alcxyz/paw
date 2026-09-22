@@ -15,17 +15,18 @@ import (
 	"text/tabwriter"
 	"time"
 
-	deployment "git.alc.xyz/alcxyz/paw/deploy"
-	"git.alc.xyz/alcxyz/paw/internal/buildinfo"
-	"git.alc.xyz/alcxyz/paw/internal/environment"
-	"git.alc.xyz/alcxyz/paw/internal/profile"
-	"git.alc.xyz/alcxyz/paw/internal/repository"
+	deployment "github.com/alcxyz/paw/deploy"
+	"github.com/alcxyz/paw/internal/buildinfo"
+	"github.com/alcxyz/paw/internal/environment"
+	"github.com/alcxyz/paw/internal/profile"
+	"github.com/alcxyz/paw/internal/repository"
 )
 
 type pathLookup func(string) (string, error)
 type commandRunner func(string, []string, io.Writer, io.Writer) error
 type manifestMaterializer func(deployment.ManifestRequest) (string, func(), error)
 type repositoryAdder func(repository.Request, io.Writer, io.Writer) error
+type repositoryExporter func(context.Context, repository.ExportRequest) error
 type environmentVerifier func(context.Context, environment.Request) (environment.Report, error)
 
 type dependencies struct {
@@ -33,6 +34,7 @@ type dependencies struct {
 	runCommand  commandRunner
 	materialize manifestMaterializer
 	addRepo     repositoryAdder
+	exportRepo  repositoryExporter
 	verifyEnv   environmentVerifier
 }
 
@@ -47,6 +49,7 @@ func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
 		runCommand:  executeCommand,
 		materialize: deployment.MaterializeManifest,
 		addRepo:     repository.Add,
+		exportRepo:  repository.Export,
 		verifyEnv:   environment.Verify,
 	})
 }
@@ -297,10 +300,20 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 }
 
 func runWorkspaceRepository(args []string, stdout, stderr io.Writer, deps dependencies) int {
-	if len(args) == 0 || args[0] != "add" {
+	if len(args) == 0 {
 		return usageError(stderr, workspaceRepositoryUsage())
 	}
+	switch args[0] {
+	case "add":
+		return runWorkspaceRepositoryAdd(args[1:], stdout, stderr, deps)
+	case "export":
+		return runWorkspaceRepositoryExport(args[1:], stdout, stderr, deps)
+	default:
+		return usageError(stderr, workspaceRepositoryUsage())
+	}
+}
 
+func runWorkspaceRepositoryAdd(args []string, stdout, stderr io.Writer, deps dependencies) int {
 	var adapter string
 	var context string
 	var name string
@@ -313,7 +326,7 @@ func runWorkspaceRepository(args []string, stdout, stderr io.Writer, deps depend
 		"--revision": &revision,
 		"--source":   &source,
 	}
-	for index := 1; index < len(args); index++ {
+	for index := 0; index < len(args); index++ {
 		option := args[index]
 		target, exists := values[option]
 		if !exists {
@@ -345,6 +358,57 @@ func runWorkspaceRepository(args []string, stdout, stderr io.Writer, deps depend
 		fmt.Fprintf(stderr, "paw: materialize repository: %v\n", err)
 		return 1
 	}
+	return 0
+}
+
+func runWorkspaceRepositoryExport(args []string, stdout, stderr io.Writer, deps dependencies) int {
+	var adapter string
+	var baseCommit string
+	var contextName string
+	var name string
+	var output string
+	values := map[string]*string{
+		"--adapter":     &adapter,
+		"--base-commit": &baseCommit,
+		"--context":     &contextName,
+		"--name":        &name,
+		"--output":      &output,
+	}
+	for index := 0; index < len(args); index++ {
+		option := args[index]
+		target, exists := values[option]
+		if !exists {
+			return usageError(stderr, fmt.Sprintf("unknown repository export option %q", option))
+		}
+		index++
+		if optionValueMissing(args, index) {
+			return usageError(stderr, fmt.Sprintf("%s requires a value", option))
+		}
+		if *target != "" {
+			return usageError(stderr, fmt.Sprintf("%s may only be specified once", option))
+		}
+		*target = args[index]
+	}
+
+	if adapter == "" || baseCommit == "" || contextName == "" || name == "" || output == "" {
+		return usageError(stderr, workspaceRepositoryUsage())
+	}
+	if !deployment.SupportsAdapter(adapter) {
+		return usageError(stderr, fmt.Sprintf("unsupported adapter %q", adapter))
+	}
+	request := repository.ExportRequest{
+		BaseCommit: baseCommit,
+		Context:    contextName,
+		Name:       name,
+		Output:     output,
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := deps.exportRepo(ctx, request); err != nil {
+		fmt.Fprintf(stderr, "paw: export repository: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "repository %s exported from %s to %s\n", name, baseCommit, output)
 	return 0
 }
 
@@ -560,6 +624,7 @@ func workspaceUsage() string {
   paw workspace pair --adapter ADAPTER --context CONTEXT [--local-port PORT] [--ttl TTL] [--label LABEL] [--json]
   paw workspace revoke --adapter ADAPTER --context CONTEXT --pairing-id ID
   paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME
+  paw workspace repository export --adapter ADAPTER --context CONTEXT --name NAME --base-commit FULL_SHA --output ABSOLUTE_NEW_PATCH
   paw workspace destroy --adapter ADAPTER --context CONTEXT --delete-state
 
 ADAPTER is kubernetes or minikube. The kubernetes adapter requires an immutable
@@ -567,7 +632,9 @@ ADAPTER is kubernetes or minikube. The kubernetes adapter requires an immutable
 }
 
 func workspaceRepositoryUsage() string {
-	return "usage: paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME"
+	return `usage:
+  paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME
+  paw workspace repository export --adapter ADAPTER --context CONTEXT --name NAME --base-commit FULL_SHA --output ABSOLUTE_NEW_PATCH`
 }
 
 func executeCommand(name string, args []string, stdout, stderr io.Writer) error {
