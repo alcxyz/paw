@@ -45,6 +45,25 @@ The generic adapter also requires `--egress-image-ref`, an immutable
 Image loading, registry authentication, and release provenance remain
 environment responsibilities outside the generic lifecycle.
 
+## Provider login state
+
+The workspace pod mounts an in-memory `emptyDir` as the provider state
+directories under `/workspace/session` (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`),
+so a subscription login made inside the pod lives only
+for that pod's lifetime and never reaches a persistent claim, a backup, a
+manifest, or the operator host
+([ADR-014](../docs/adr/ADR-014-pod-scoped-provider-login-state.md)).
+
+```sh
+paw workspace login --adapter minikube --context minikube --provider codex
+paw workspace logout --adapter minikube --context minikube --provider codex
+```
+
+Login runs the provider's own device or code login inside the pod through an
+interactive exec; the operator finishes the browser step on their own machine.
+The provider must match the one recorded on the workspace. Replacing the pod,
+including after backup, restore, or upgrade, discards the login.
+
 ## Bounded egress
 
 Every workspace namespace runs one egress proxy

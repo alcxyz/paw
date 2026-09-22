@@ -30,7 +30,10 @@ These are gates, not claims that the integrations already exist:
 - [ ] Pass current v2 baseline network verification and cleanup. Retain a known
   non-enforcing negative control for the security test, not a new support matrix.
 - [ ] Enable provider authentication at runtime through a reviewed mechanism.
-  Do not copy a host credential directory or mount SOPS identities.
+  Do not copy a host credential directory or mount SOPS identities. The
+  reviewed mechanism is the pod-scoped login of
+  [ADR-014](adr/ADR-014-pod-scoped-provider-login-state.md); the gate closes
+  when the first pilot login completes through it.
 - [ ] Prove approved provider access and denied unapproved access while retaining
   default-deny networking. Baseline pod-network checks do not prove this.
 - [ ] Establish authenticated access from both devices. The current CLI tunnel

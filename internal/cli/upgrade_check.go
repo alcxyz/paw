@@ -266,7 +266,7 @@ func hasPersistentV1Layout(statefulSet statefulSetResource) bool {
 func validUpgradePodSpec(spec podSpec) bool {
 	if len(spec.Containers) != 1 || spec.Containers[0].Name != "t3" || spec.Containers[0].Image == "" ||
 		len(spec.InitContainers) != 0 || len(spec.EphemeralContainers) != 0 ||
-		!validUpgradeMounts(spec.Containers[0].VolumeMounts) || len(spec.Volumes) != 4 {
+		!validUpgradeMounts(spec.Containers[0].VolumeMounts) || len(spec.Volumes) != 5 {
 		return false
 	}
 	volumes := make(map[string]volumeSpec, len(spec.Volumes))
@@ -282,31 +282,37 @@ func validUpgradePodSpec(spec podSpec) bool {
 	state, stateExists := volumes["state"]
 	work, workExists := volumes["work"]
 	tmp, tmpExists := volumes["tmp"]
+	session, sessionExists := volumes["session"]
 	contract, contractExists := volumes["contract"]
 	return stateExists && state.PersistentVolumeClaim != nil &&
 		state.PersistentVolumeClaim.ClaimName == workspaceStateClaim && !state.PersistentVolumeClaim.ReadOnly &&
 		workExists && work.PersistentVolumeClaim != nil &&
 		work.PersistentVolumeClaim.ClaimName == workspaceWorkClaim && !work.PersistentVolumeClaim.ReadOnly &&
 		tmpExists && tmp.EmptyDir != nil &&
+		sessionExists && session.EmptyDir != nil &&
 		contractExists && contract.ConfigMap != nil && contract.ConfigMap.Name == "workspace-contract"
 }
 
 func validUpgradeMounts(mounts []volumeMount) bool {
-	if len(mounts) != 4 {
+	if len(mounts) != 6 {
 		return false
 	}
 	expected := map[string]volumeMount{
-		"state":    {Name: "state", MountPath: "/workspace/state"},
-		"work":     {Name: "work", MountPath: "/workspace/work"},
-		"tmp":      {Name: "tmp", MountPath: "/tmp"},
-		"contract": {Name: "contract", MountPath: "/etc/paw", ReadOnly: true},
+		"/workspace/state":         {Name: "state", MountPath: "/workspace/state"},
+		"/workspace/work":          {Name: "work", MountPath: "/workspace/work"},
+		"/tmp":                     {Name: "tmp", MountPath: "/tmp"},
+		"/workspace/session/codex": {Name: "session", MountPath: "/workspace/session/codex", SubPath: "codex"},
+		"/workspace/session/claude": {
+			Name: "session", MountPath: "/workspace/session/claude", SubPath: "claude",
+		},
+		"/etc/paw": {Name: "contract", MountPath: "/etc/paw", ReadOnly: true},
 	}
 	for _, mount := range mounts {
-		want, exists := expected[mount.Name]
+		want, exists := expected[mount.MountPath]
 		if !exists || mount != want {
 			return false
 		}
-		delete(expected, mount.Name)
+		delete(expected, mount.MountPath)
 	}
 	return len(expected) == 0
 }

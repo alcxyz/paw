@@ -136,6 +136,10 @@ fixtures, and deletes only its own source/restore workspaces. It retains private
 artifacts for inspection. It does not qualify authenticated provider state, T3
 thread/schema migrations, or production restore readiness.
 
+Provider logins are pod-scoped (ADR-014): every pod replacement, including a
+restore or upgrade, requires `paw workspace login` again. Backups never contain
+provider credentials.
+
 The planned upgrade deliberately interrupts browser connections and provider
 turns. Operators must finish active work before it starts. Preserve a compatible
 previous runtime and backup together: an image-only rollback after a database

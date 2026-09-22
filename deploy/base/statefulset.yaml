@@ -115,6 +115,14 @@ spec:
               mountPath: /workspace/work
             - name: tmp
               mountPath: /tmp
+            # Provider state directories must exist before the tools start;
+            # subPath mounts make the kubelet create them inside the volume.
+            - name: session
+              mountPath: /workspace/session/codex
+              subPath: codex
+            - name: session
+              mountPath: /workspace/session/claude
+              subPath: claude
             - name: contract
               mountPath: /etc/paw
               readOnly: true
@@ -127,6 +135,12 @@ spec:
             claimName: workspace-work
         - name: tmp
           emptyDir: {}
+        # Provider login state lives here, in memory, for one pod lifetime.
+        # It is never on a persistent claim, in a backup, or in a manifest.
+        - name: session
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
         - name: contract
           configMap:
             name: workspace-contract
