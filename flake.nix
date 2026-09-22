@@ -364,14 +364,22 @@
             touch "$out"
           '';
 
-          govet = pkgs.runCommand "paw-govet-check" { nativeBuildInputs = [ pkgs.go ]; } ''
-            export HOME="$TMPDIR"
-            cp -R ${./.} source
-            chmod -R u+w source
-            cd source
-            go vet ./...
-            touch "$out"
-          '';
+          govet =
+            pkgs.runCommand "paw-govet-check"
+              {
+                nativeBuildInputs = [ pkgs.go ];
+                # archive/tar pulls in os/user, which vet compiles through
+                # runtime/cgo; the check sandbox has no C compiler.
+                env.CGO_ENABLED = "0";
+              }
+              ''
+                export HOME="$TMPDIR"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                go vet ./...
+                touch "$out"
+              '';
 
           markdown =
             pkgs.runCommand "paw-markdown-check"
