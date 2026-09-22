@@ -30,7 +30,8 @@ spec:
         paw.alc.xyz/storage-layout: persistent-v1
     spec:
       automountServiceAccountToken: false
-      enableServiceLinks: false
+      # Service links deliver the egress proxy address without DNS egress.
+      enableServiceLinks: true
       serviceAccountName: workspace
       terminationGracePeriodSeconds: 30
       securityContext:
@@ -62,6 +63,10 @@ spec:
           env:
             - name: HOME
               value: /workspace/state/home
+            - name: HTTPS_PROXY
+              value: http://$(EGRESS_SERVICE_HOST):$(EGRESS_SERVICE_PORT)
+            - name: NO_PROXY
+              value: localhost,127.0.0.1
             - name: TMPDIR
               value: /tmp
             - name: XDG_CACHE_HOME

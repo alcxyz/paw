@@ -1,0 +1,211 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: egress
+  labels:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: egress
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: egress-destinations
+  labels:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: egress
+data:
+  destinations: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress
+  labels:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: egress
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: egress
+  ports:
+    - name: proxy
+      port: 3128
+      protocol: TCP
+      targetPort: proxy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress
+  labels:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: egress
+  annotations:
+    paw.alc.xyz/contract-version: v0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: paw
+      app.kubernetes.io/component: egress
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: paw
+        app.kubernetes.io/component: egress
+      annotations:
+        paw.alc.xyz/contract-version: v0
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      serviceAccountName: egress
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: proxy
+          image: registry.invalid/paw/egress-proxy@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          imagePullPolicy: IfNotPresent
+          args:
+            - --listen
+            - :3128
+            - --destinations
+            - /etc/paw-egress/destinations
+          ports:
+            - name: proxy
+              containerPort: 3128
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: proxy
+            initialDelaySeconds: 1
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: proxy
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          volumeMounts:
+            - name: destinations
+              mountPath: /etc/paw-egress
+              readOnly: true
+      volumes:
+        - name: destinations
+          configMap:
+            name: egress-destinations
+---
+# The proxy accepts connections only from workspace pods and may itself reach
+# only the cluster resolver and public TCP 443. The destination list, not this
+# policy, decides which hostnames are allowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy
+  labels:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: paw
+      app.kubernetes.io/component: egress
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: paw
+              app.kubernetes.io/component: workspace
+      ports:
+        - port: proxy
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 224.0.0.0/3
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - ::/128
+              - ::1/128
+              - fc00::/7
+              - fe80::/10
+              - ff00::/8
+      ports:
+        - port: 443
+          protocol: TCP
+---
+# Workspace pods keep the default deny and gain exactly one egress destination:
+# the proxy port. No DNS egress is granted; the proxy address arrives through
+# Kubernetes service links.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workspace-egress-proxy
+  labels:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: workspace
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: paw
+      app.kubernetes.io/component: workspace
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: paw
+              app.kubernetes.io/component: egress
+      ports:
+        - port: proxy
+          protocol: TCP

@@ -8,6 +8,7 @@ import (
 )
 
 const testDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const testEgressDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 func TestMaterializeMinikube(t *testing.T) {
 	path, cleanup, err := Materialize("minikube")
@@ -143,7 +144,8 @@ func TestMaterializeGenericKubernetesBindsImmutableReleasedImage(t *testing.T) {
 			Profile:  "platform-readonly",
 			Provider: "opencode",
 		},
-		ImageReference: reference,
+		ImageReference:       reference,
+		EgressImageReference: "registry.example/paw/paw-egress-proxy@" + testEgressDigest,
 	})
 	if err != nil {
 		t.Fatalf("MaterializeManifest returned an error: %v", err)
@@ -157,6 +159,8 @@ func TestMaterializeGenericKubernetesBindsImmutableReleasedImage(t *testing.T) {
 	for _, expected := range []string{
 		"newName: registry.example/paw/paw-platform-readonly-opencode",
 		"digest: " + testDigest,
+		"newName: registry.example/paw/paw-egress-proxy",
+		"digest: " + testEgressDigest,
 		"value: platform-readonly",
 		"value: opencode",
 	} {
@@ -206,5 +210,86 @@ func TestMinikubeRejectsReleasedImageReference(t *testing.T) {
 	defer cleanup()
 	if err == nil || !strings.Contains(err.Error(), "does not accept") {
 		t.Fatalf("expected Minikube released-image rejection, got %v", err)
+	}
+}
+
+func TestMaterializeGenericKubernetesRequiresEgressImage(t *testing.T) {
+	_, _, err := MaterializeManifest(ManifestRequest{
+		Adapter:        AdapterKubernetes,
+		Selection:      Selection{Profile: "core", Provider: "codex"},
+		ImageReference: "registry.example/paw/paw-codex@" + testDigest,
+	})
+	if err == nil {
+		t.Fatal("expected an error without a released egress proxy image")
+	}
+	_, _, err = MaterializeManifest(ManifestRequest{
+		Adapter:              AdapterKubernetes,
+		Selection:            Selection{Profile: "core", Provider: "codex"},
+		ImageReference:       "registry.example/paw/paw-codex@" + testDigest,
+		EgressImageReference: "registry.example/paw/paw-codex@" + testEgressDigest,
+	})
+	if err == nil {
+		t.Fatal("expected an error for an egress reference naming another image")
+	}
+}
+
+func TestMinikubeRejectsEgressImageReference(t *testing.T) {
+	_, _, err := MaterializeManifest(ManifestRequest{
+		Adapter:              AdapterMinikube,
+		Selection:            Selection{Profile: "core", Provider: "none"},
+		EgressImageReference: "registry.example/paw/paw-egress-proxy@" + testEgressDigest,
+	})
+	if err == nil {
+		t.Fatal("expected minikube to reject a released egress image")
+	}
+}
+
+func TestEgressDestinationsResolveByProvider(t *testing.T) {
+	destinations, err := EgressDestinations(Selection{Profile: "core", Provider: "codex"})
+	if err != nil {
+		t.Fatalf("EgressDestinations returned an error: %v", err)
+	}
+	hosts := make([]string, 0, len(destinations))
+	for _, destination := range destinations {
+		if destination.Purpose != PurposeApprovedProviderAPI {
+			t.Fatalf("unexpected purpose %q for %s", destination.Purpose, destination.Host)
+		}
+		hosts = append(hosts, destination.Host)
+	}
+	if strings.Join(hosts, ",") != "auth.openai.com,chatgpt.com,api.openai.com" {
+		t.Fatalf("unexpected codex destinations %v", hosts)
+	}
+	none, err := EgressDestinations(Selection{Profile: "core", Provider: "none"})
+	if err != nil || len(none) != 0 {
+		t.Fatalf("provider none should resolve to no destinations, got %v, %v", none, err)
+	}
+	if _, err := EgressDestinations(Selection{Profile: "core", Provider: "unknown"}); err == nil {
+		t.Fatal("expected an unknown provider to be rejected")
+	}
+	text := EgressDestinationsText(destinations)
+	if text != "auth.openai.com approved-provider-api\nchatgpt.com approved-provider-api\napi.openai.com approved-provider-api\n" {
+		t.Fatalf("unexpected destination text %q", text)
+	}
+}
+
+func TestMaterializeSelectionRendersDestinations(t *testing.T) {
+	path, cleanup, err := MaterializeSelection(AdapterMinikube, Selection{Profile: "core", Provider: "codex"})
+	if err != nil {
+		t.Fatalf("MaterializeSelection returned an error: %v", err)
+	}
+	defer cleanup()
+	content, err := os.ReadFile(filepath.Join(path, "kustomization.yaml"))
+	if err != nil {
+		t.Fatalf("read kustomization: %v", err)
+	}
+	for _, expected := range []string{
+		"name: egress-destinations",
+		"path: /data/destinations",
+		`value: "auth.openai.com approved-provider-api\nchatgpt.com approved-provider-api\napi.openai.com approved-provider-api\n"`,
+		"newName: paw-egress-proxy",
+	} {
+		if !strings.Contains(string(content), expected) {
+			t.Fatalf("kustomization does not contain %q:\n%s", expected, content)
+		}
 	}
 }

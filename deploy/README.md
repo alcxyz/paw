@@ -40,8 +40,29 @@ paw workspace create --adapter kubernetes --context CONTEXT \
 
 The reference must be fully qualified, use `@sha256:…` rather than a mutable
 tag, and end with the reviewed image name selected by the profile/provider pair.
+The generic adapter also requires `--egress-image-ref`, an immutable
+`paw-egress-proxy` image for the bounded egress proxy described below.
 Image loading, registry authentication, and release provenance remain
 environment responsibilities outside the generic lifecycle.
+
+## Bounded egress
+
+Every workspace namespace runs one egress proxy
+([ADR-013](../docs/adr/ADR-013-per-workspace-bounded-egress-proxy.md)): the
+`egress` Deployment, Service, ServiceAccount, and `egress-destinations`
+ConfigMap in `base/egress.yaml`. Workspace pods keep the default deny and gain
+exactly one egress rule, to the proxy port; they have no DNS egress. The proxy
+address reaches the T3 container through Kubernetes service links as
+`HTTPS_PROXY`, so provider tools that honor that variable use the proxy without
+any name resolution.
+
+The proxy accepts only HTTP `CONNECT` to port 443 for hostnames listed in the
+ConfigMap, resolves them itself, refuses private, link-local, loopback, and
+metadata address ranges, and logs hostname and outcome only. The CLI resolves
+the selected provider's declared purposes to that list at render time from a
+reviewed table in `deploy/egress.go`; `--provider none` renders an empty list
+and the proxy denies everything. The proxy pod may reach the cluster resolver
+and public TCP 443 only. Minikube binds the local `paw-egress-proxy:dev` image.
 
 The PAW CLI binds one reviewed local image composition rather than accepting an
 arbitrary image name:
