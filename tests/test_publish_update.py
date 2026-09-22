@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -21,9 +22,10 @@ SPEC.loader.exec_module(publish_update)
 
 def environment(**overrides):
     result = {
-        "FORGEJO_SERVER_URL": "https://forgejo.example.test",
-        "FORGEJO_REPOSITORY": "owner/paw",
-        "FORGEJO_TOKEN": "test-token",
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_API_URL": "https://api.github.com",
+        "GITHUB_REPOSITORY": "alcxyz/paw",
+        "GITHUB_TOKEN": "test-token",
     }
     result.update(overrides)
     return result
@@ -37,13 +39,13 @@ class FakeClient:
         self.existing_branches = set()
 
     def repository(self):
-        return {"id": 42}
+        return {"id": 42, "full_name": "alcxyz/paw", "private": False}
 
     def open_pulls_page(self, base, page):
         return self.pulls if page == 1 else []
 
     def branch(self, name):
-        return {"commit": {"id": self.remote_head}}
+        return {"commit": {"sha": self.remote_head}}
 
     def create_pull(self, base, branch):
         self.created.append((base, branch))
@@ -83,7 +85,7 @@ class PublishUpdateTests(unittest.TestCase):
             env = environment()
         if root is None:
             root = Path(tempfile.mkdtemp())
-        with mock.patch.object(publish_update, "ForgejoClient", return_value=client), mock.patch.object(
+        with mock.patch.object(publish_update, "GitHubClient", return_value=client), mock.patch.object(
             publish_update, "Git", return_value=git
         ):
             return publish_update.run(args, env, root)
@@ -94,6 +96,35 @@ class PublishUpdateTests(unittest.TestCase):
         self.assertEqual(self.run_with(client, git), 0)
         self.assertEqual(git.published, [])
         self.assertEqual(client.created, [])
+
+    def test_github_origins_default_for_a_safe_repository(self):
+        config = publish_update.Config.from_env(
+            {
+                "GITHUB_REPOSITORY": "alcxyz/paw",
+                "GITHUB_TOKEN": "test-token",
+            }
+        )
+        self.assertEqual(config.server_url, "https://github.com")
+        self.assertEqual(config.api_url, "https://api.github.com")
+
+    def test_private_fork_is_accepted_when_repository_metadata_matches(self):
+        client = publish_update.GitHubClient(
+            publish_update.Config.from_env(
+                environment(GITHUB_REPOSITORY="fork-owner/paw")
+            )
+        )
+        metadata = {"id": 42, "full_name": "fork-owner/paw", "private": True}
+        with mock.patch.object(client, "request", return_value=metadata):
+            self.assertEqual(client.repository(), metadata)
+
+    def test_unexpected_repository_metadata_is_rejected(self):
+        client = publish_update.GitHubClient(
+            publish_update.Config.from_env(environment())
+        )
+        metadata = {"id": 42, "full_name": "other/paw", "private": False}
+        with mock.patch.object(client, "request", return_value=metadata):
+            with self.assertRaises(publish_update.PublishError):
+                client.repository()
 
     def test_existing_owned_dependency_pr_skips_publication(self):
         pulls = [
@@ -230,10 +261,52 @@ class PublishUpdateTests(unittest.TestCase):
         self.assertIn("http.extraHeader=", push)
         self.assertIn("http.followRedirects=false", push)
         self.assertNotIn("test-token", " ".join(push))
+        self.assertEqual(calls[3][1]["env"]["GITHUB_TOKEN"], "test-token")
+
+    def test_github_api_routing_headers_query_and_payload(self):
+        class Response:
+            status = 201
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, _limit):
+                return b'{"number":1}'
+
+        client = publish_update.GitHubClient(
+            publish_update.Config.from_env(environment())
+        )
+        client.opener = mock.Mock()
+        client.opener.open.return_value = Response()
+        value = client.request(
+            "POST",
+            "/repos/alcxyz/paw/pulls",
+            query={"page": 2, "per_page": 50},
+            payload={"base": "dev", "head": "automation/dependencies-test"},
+            expected=(201,),
+        )
+        self.assertEqual(value, {"number": 1})
+        request = client.opener.open.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            "https://api.github.com/repos/alcxyz/paw/pulls?page=2&per_page=50",
+        )
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.get_header("Accept"), "application/vnd.github+json")
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-token")
+        self.assertEqual(request.get_header("X-github-api-version"), "2022-11-28")
+        self.assertEqual(
+            json.loads(request.data),
+            {"base": "dev", "head": "automation/dependencies-test"},
+        )
+        self.assertNotIn("test-token", request.full_url)
 
     def test_askpass_uses_checkout_compatible_token_username(self):
         result = subprocess.run(
-            [sys.executable, ASKPASS, "Username for 'https://forgejo.example.test':"],
+            [sys.executable, ASKPASS, "Username for 'https://github.com':"],
             check=False,
             env={},
             stdout=subprocess.PIPE,
@@ -244,11 +317,23 @@ class PublishUpdateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "x-access-token\n")
 
+        result = subprocess.run(
+            [sys.executable, ASKPASS, "Password for 'https://x-access-token@github.com':"],
+            check=False,
+            env={"GITHUB_TOKEN": "test-token"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "test-token\n")
+
     def test_http_error_reports_status_without_response_body(self):
         config = publish_update.Config.from_env(environment())
-        client = publish_update.ForgejoClient(config)
+        client = publish_update.GitHubClient(config)
         error = urllib.error.HTTPError(
-            "https://forgejo.example.test/api/v1/repos/owner/paw",
+            "https://api.github.com/repos/alcxyz/paw",
             500,
             "failure",
             {},
@@ -257,20 +342,24 @@ class PublishUpdateTests(unittest.TestCase):
         client.opener = mock.Mock()
         client.opener.open.side_effect = error
         with self.assertRaises(publish_update.PublishError) as caught:
-            client.request("GET", "/repos/owner/paw")
-        self.assertEqual(str(caught.exception), "Forgejo API returned HTTP 500")
+            client.request("GET", "/repos/alcxyz/paw")
+        self.assertEqual(str(caught.exception), "GitHub API returned HTTP 500")
         self.assertNotIn("sensitive", str(caught.exception))
         self.assertTrue(error.fp.closed)
 
     def test_rejects_non_origin_server_url_and_unsafe_base(self):
         for value in (
-            "http://forgejo.example.test",
-            "https://token@forgejo.example.test",
-            "https://forgejo.example.test/subpath",
-            "https://forgejo.example.test?token=value",
+            "http://github.com",
+            "https://token@github.com",
+            "https://github.com/subpath",
+            "https://github.com?token=value",
         ):
             with self.subTest(value=value), self.assertRaises(publish_update.PublishError):
-                publish_update.Config.from_env(environment(FORGEJO_SERVER_URL=value))
+                publish_update.Config.from_env(environment(GITHUB_SERVER_URL=value))
+        with self.assertRaises(publish_update.PublishError):
+            publish_update.Config.from_env(environment(GITHUB_API_URL="https://example.test"))
+        with self.assertRaises(publish_update.PublishError):
+            publish_update.Config.from_env(environment(GITHUB_REPOSITORY="other/paw/extra"))
         with self.assertRaises(publish_update.PublishError):
             publish_update.Config.from_env(environment(BASE_BRANCH="../main"))
 

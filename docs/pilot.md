@@ -3,7 +3,7 @@
 Prove one useful workflow before expanding the platform. See
 [ADR-008](adr/ADR-008-focused-pilot-and-patch-export.md).
 
-Execution is tracked in [Forgejo issue #38](https://git.alc.xyz/alcxyz/paw/issues/38)
+Execution is tracked in [GitHub issue #1](https://github.com/alcxyz/paw/issues/1)
 under the **Pilot: One useful AI-assisted task** milestone.
 
 ## Scope

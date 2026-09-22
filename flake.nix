@@ -106,14 +106,14 @@
             ldflags = [
               "-s"
               "-w"
-              "-X git.alc.xyz/alcxyz/paw/internal/buildinfo.Version=0.0.0-dev"
-              "-X git.alc.xyz/alcxyz/paw/internal/buildinfo.Commit=${
+              "-X github.com/alcxyz/paw/internal/buildinfo.Version=0.0.0-dev"
+              "-X github.com/alcxyz/paw/internal/buildinfo.Commit=${
                 self.shortRev or self.dirtyShortRev or "unknown"
               }"
             ];
             meta = {
               description = "Portable AI workspace operator";
-              homepage = "https://git.alc.xyz/alcxyz/paw";
+              homepage = "https://github.com/alcxyz/paw";
               mainProgram = "paw";
             };
           };
@@ -368,6 +368,7 @@
                   ${./deploy}/README.md \
                   ${./docs}/builds.md \
                   ${./docs}/pilot.md \
+                  ${./docs}/project-status.md \
                   ${./docs}/adr/*.md
                 touch "$out"
               '';
@@ -376,6 +377,7 @@
             nixfmt --check \
               ${./flake.nix} \
               ${./examples/custom-build.nix} \
+              ${./scripts/ci/sandbox-probe.nix} \
               ${./nix/images/paw-core.nix} \
               ${./nix/images/report.nix} \
               ${./nix/lib/eval-profile.nix} \
@@ -412,10 +414,8 @@
               }
               ''
                 actionlint \
-                  -ignore 'undefined variable "forgejo"' \
-                  -ignore 'specifying action "https://(data.forgejo.org/actions/checkout|github.com/cachix/install-nix-action)@' \
-                  ${./.forgejo/workflows/validate.yml} \
-                  ${./.forgejo/workflows/update-dependencies.yml}
+                  ${./.github/workflows/validate.yml} \
+                  ${./.github/workflows/update-dependencies.yml}
                 touch "$out"
               '';
 

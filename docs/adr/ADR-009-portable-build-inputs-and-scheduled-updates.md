@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-09-22
 - Amends: ADR-002 section 7
+- Hosting amended by ADR-010: GitHub is now canonical; the safety contract below
+  is unchanged.
 
 ## Context
 
@@ -40,7 +42,7 @@ immutable image self-upgrade.
 
 ### Propose updates nightly; promote deliberately
 
-A scheduled Forgejo workflow checks upstream stable releases and proposes
+A scheduled GitHub workflow checks upstream stable releases and proposes
 changes to reviewed dependency pins. Nightly is the schedule, not the upstream
 release channel. Manual dispatch uses the same checks. Fork operators select
 their own inputs explicitly; the default updater must not replace a custom

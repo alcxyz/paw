@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"git.alc.xyz/alcxyz/paw/internal/cli"
+	"github.com/alcxyz/paw/internal/cli"
 )
 
 func main() {

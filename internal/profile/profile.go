@@ -3,7 +3,7 @@ package profile
 import (
 	"slices"
 
-	"git.alc.xyz/alcxyz/paw/contract"
+	"github.com/alcxyz/paw/contract"
 )
 
 // Definition is the user-visible portion of a built-in workspace profile.

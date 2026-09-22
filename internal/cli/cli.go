@@ -15,11 +15,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	deployment "git.alc.xyz/alcxyz/paw/deploy"
-	"git.alc.xyz/alcxyz/paw/internal/buildinfo"
-	"git.alc.xyz/alcxyz/paw/internal/environment"
-	"git.alc.xyz/alcxyz/paw/internal/profile"
-	"git.alc.xyz/alcxyz/paw/internal/repository"
+	deployment "github.com/alcxyz/paw/deploy"
+	"github.com/alcxyz/paw/internal/buildinfo"
+	"github.com/alcxyz/paw/internal/environment"
+	"github.com/alcxyz/paw/internal/profile"
+	"github.com/alcxyz/paw/internal/repository"
 )
 
 type pathLookup func(string) (string, error)

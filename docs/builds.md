@@ -3,7 +3,7 @@
 PAW builds its images in this repository. It does not require a personal package
 repository, credentials from a developer machine, or Nix inside the workspace.
 See [ADR-009](adr/ADR-009-portable-build-inputs-and-scheduled-updates.md) and
-[issue #40](https://git.alc.xyz/alcxyz/paw/issues/40).
+[issue #2](https://github.com/alcxyz/paw/issues/2).
 
 ## Inputs and ownership
 
@@ -109,7 +109,16 @@ disable sandbox fallback: an incompatible runner must fail, not silently build
 without the isolation required by ADR-009. A generic container runner label
 alone does not establish this capability.
 
-`.forgejo/workflows/update-dependencies.yml` runs at **03:17 UTC** and supports
+On Linux, `bash scripts/ci/check-sandbox.sh` performs a small local build before
+the larger checks. It verifies that a temporary host marker is inaccessible and
+that the build has separate mount, PID, and network namespaces. Each invocation
+uses a new marker, and remote builders are disabled for this probe, so a cached
+or remote success cannot qualify the local runner. This checks Nix build
+isolation, not the runner's credentials, network policy, or between-job cleanup;
+those remain separate operator responsibilities. The same probe can qualify a
+Forgejo or GitHub runner without adding a hosting-provider dependency to PAW.
+
+`.github/workflows/update-dependencies.yml` runs at **03:17 UTC** and supports
 manual dispatch from `dev`. It:
 
 1. Checks whether this repository already has an open automated dependency PR;
@@ -124,15 +133,15 @@ login. PRs target `dev`; promotion to protected `main` remains deliberate.
 Pending updates intentionally pause later proposals: maintainers should review
 or close them rather than expecting the bot to replace review work.
 
-Forgejo's automatic workflow token does not trigger additional workflows from
+GitHub's automatic workflow token does not trigger additional workflows from
 its own pushes or PRs. The update job therefore validates before publication;
 do not assume the bot-created PR will also receive an automatic validation run.
 Dispatch **Validate PAW** manually on the proposed branch before merging,
 especially after any maintainer edits. No broader personal token is required
 just to bypass this recursion protection. See the
-[automatic-token documentation](https://forgejo.org/docs/v15.0/user/actions/basic-concepts/#automatic-token).
+[automatic-token documentation](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow#triggering-a-workflow-from-a-workflow).
 
-The publication step uses Forgejo's repository-scoped workflow token through
+The publication step uses GitHub's repository-scoped workflow token through
 the authenticated client and Git askpass; it never places a credential in a
 command argument or saved Git remote. Checkout disables credential persistence.
 Build steps have no provider/infrastructure credentials or configured publication
@@ -140,18 +149,26 @@ token. Run jobs on isolated ephemeral runners, not a developer workstation with
 credential-bearing mounts. Do not weaken isolation or attach broad tokens to
 work around runner/API failures.
 
-`.forgejo/workflows/validate.yml` runs the same checks for PRs and pushes to
+`.github/workflows/validate.yml` runs the same checks for PRs and pushes to
 `dev`/`main`. All external actions are pinned to commits. No shared writable
 cross-trust build cache is configured in this first implementation.
 
 ## Activation and limits
 
-Forgejo only schedules workflows present on its default branch. Adding the
+GitHub only schedules workflows present on its default branch. Adding the
 workflow to a PR does not activate the nightly schedule. After review and merge
 to the default `dev`, manually dispatch once, confirm runner availability and
 repository-token permission, and then observe the scheduled run. Do not report
 the scheduler as proven merely because local unit tests pass. See the
-[Forgejo scheduling reference](https://forgejo.org/docs/v15.0/user/actions/reference/#onschedule).
+[GitHub scheduling reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
+Validation uses a standard GitHub-hosted Ubuntu VM with read-only repository
+permissions. The update job alone declares `contents: write` and
+`pull-requests: write`; its token is supplied only to pending-review and
+publication steps. The repository must allow GitHub Actions to create pull
+requests. The Nix installer explicitly receives no GitHub access token, so Nix
+configuration does not retain the workflow credential. Schedule timing is best
+effort, not an exact delivery guarantee.
 
 The first lane builds Linux amd64. Native ARM images, authenticated provider
 smoke tests, and candidate registry publication remain separate qualification

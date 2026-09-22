@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	deployment "git.alc.xyz/alcxyz/paw/deploy"
-	"git.alc.xyz/alcxyz/paw/internal/environment"
-	"git.alc.xyz/alcxyz/paw/internal/repository"
+	deployment "github.com/alcxyz/paw/deploy"
+	"github.com/alcxyz/paw/internal/environment"
+	"github.com/alcxyz/paw/internal/repository"
 )
 
 const testImageDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

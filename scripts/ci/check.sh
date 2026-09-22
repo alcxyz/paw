@@ -2,6 +2,9 @@
 set -euo pipefail
 
 # No live-cluster or authenticated provider operations belong in build CI.
+if [[ $(uname -s) == Linux ]]; then
+  bash scripts/ci/check-sandbox.sh
+fi
 # The dependency-automation flake check runs the Python suite with pinned Python.
 nix flake check --no-update-lock-file
 

@@ -28,7 +28,9 @@ clearly distinguishable from accepted ones.
 
 ## Git
 
+- GitHub (`alcxyz/paw`) is canonical for code, issues, PRs, CI, and releases.
+  Forgejo is a private secondary copy and historical tracker, not a merge gate.
 - Use `dev` for normal development and promote to protected `main` through a
-  pull request once the remote repository is established.
+  GitHub pull request.
 - Do not create or publish an external repository without confirming its host,
   organization, name, and visibility.

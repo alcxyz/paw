@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal non-interactive askpass helper for Forgejo dependency updates."""
+"""Minimal non-interactive askpass helper for GitHub dependency updates."""
 
 import os
 import sys
@@ -11,7 +11,7 @@ def main() -> int:
         print("x-access-token")
         return 0
     if "password" in prompt.lower():
-        token = os.environ.get("FORGEJO_TOKEN")
+        token = os.environ.get("GITHUB_TOKEN")
         if not token:
             return 1
         print(token)

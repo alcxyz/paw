@@ -15,6 +15,10 @@ requiring independently maintained deployment models.
 > decisions live in
 > [docs/adr](docs/adr/README.md).
 
+Code, issues, pull requests, and CI are maintained at
+[github.com/alcxyz/paw](https://github.com/alcxyz/paw). See the
+[project tracker](docs/project-status.md) for migrated work items.
+
 The immediate priority is a [focused pilot](docs/pilot.md): one engineer, one
 provider, one useful repository task, and continuation from multiple devices.
 Broader provider, cluster, and backend coverage follows that feedback. Existing
@@ -442,6 +446,6 @@ core, provider-only, capability-only, and composed artifacts.
 
 ## Sensitive material
 
-This repository is private, but credentials, decrypted configuration, internal
-access details, and operational transcripts must still not be committed. See
+This repository is public. Credentials, decrypted configuration, internal
+access details, and private operational transcripts must not be committed. See
 [AGENTS.md](AGENTS.md) for the repository's agent and secret-handling rules.

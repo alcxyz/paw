@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.alc.xyz/alcxyz/paw/internal/environment"
+	"github.com/alcxyz/paw/internal/environment"
 )
 
 func TestCreateDoesNotApplyAfterFailedNamespaceReservation(t *testing.T) {
