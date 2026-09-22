@@ -3,15 +3,20 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var repositoryName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+const repositoryStreamTimeout = 3 * time.Minute
 
 // Request selects one local repository ref and its destination in a workspace.
 type Request struct {
@@ -43,8 +48,11 @@ func Add(request Request, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	bundle := exec.Command("git", "-C", selected.source, "bundle", "create", "-", selected.ref)
-	kubectl := exec.Command(
+	streamContext, cancel := context.WithTimeout(context.Background(), repositoryStreamTimeout)
+	defer cancel()
+	bundle := exec.CommandContext(streamContext, "git", "-C", selected.source, "bundle", "create", "-", selected.ref)
+	bundle.WaitDelay = 5 * time.Second
+	kubectl := exec.CommandContext(streamContext,
 		"kubectl",
 		"--context", request.Context,
 		"--namespace", "paw-workspace",
@@ -52,34 +60,47 @@ func Add(request Request, stdout, stderr io.Writer) error {
 		"sh", "-ceu", materializeScript,
 		"paw-repository", request.Name, selected.ref, selected.object, selected.commit,
 	)
+	kubectl.WaitDelay = 5 * time.Second
 
-	reader, writer := io.Pipe()
-	bundle.Stdout = writer
 	bundle.Stderr = stderr
-	kubectl.Stdin = reader
 	kubectl.Stdout = stdout
 	kubectl.Stderr = stderr
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return fmt.Errorf("create Git bundle pipe: %w", err)
+	}
+	bundle.Stdout = writer
+	kubectl.Stdin = reader
 
 	if err := kubectl.Start(); err != nil {
 		_ = reader.Close()
 		_ = writer.Close()
 		return fmt.Errorf("start kubectl repository stream: %w", err)
 	}
+	// Each child now owns its end of the OS pipe. Keeping parent copies open
+	// would prevent EOF/SIGPIPE from reaching the other child on early exit.
+	_ = reader.Close()
 	if err := bundle.Start(); err != nil {
-		_ = writer.CloseWithError(err)
+		_ = writer.Close()
 		_ = kubectl.Wait()
 		return fmt.Errorf("start Git bundle stream: %w", err)
 	}
+	_ = writer.Close()
 
 	bundleDone := make(chan error, 1)
 	go func() {
 		bundleErr := bundle.Wait()
-		_ = writer.CloseWithError(bundleErr)
 		bundleDone <- bundleErr
 	}()
 
-	kubectlErr := kubectl.Wait()
-	_ = reader.Close()
+	kubectlDone := make(chan error, 1)
+	go func() {
+		kubectlErr := kubectl.Wait()
+		kubectlDone <- kubectlErr
+	}()
+
+	kubectlErr := <-kubectlDone
 	bundleErr := <-bundleDone
 	return finishAdd(request.Name, selected.commit, kubectlErr, bundleErr, stdout)
 }
@@ -169,27 +190,28 @@ ref="$2"
 object="$3"
 commit="$4"
 destination="/workspace/work/$name"
-if test -e "$destination" || test -L "$destination"; then
-  echo "repository destination $destination already exists" >&2
-  exit 1
-fi
 bundle_file=""
 staging_root=""
-trap 'rm -f -- "$bundle_file"; rm -rf -- "$staging_root"' EXIT
+trap 'rm -f -- "$bundle_file"; if test -n "$staging_root"; then rm -rf -- "$staging_root"; fi' EXIT
 trap 'exit 1' HUP INT TERM
 bundle_file="$(mktemp /tmp/paw-repository.XXXXXX)"
-staging_root="$(mktemp -d /workspace/work/.paw-repository.XXXXXX)"
-staging="$staging_root/repository"
+staging=""
 # Import only the bundle, without recipient templates, hooks, or checkout filters.
 GIT_CONFIG_NOSYSTEM=1
 GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM GIT_CONFIG_GLOBAL
 cat >"$bundle_file"
+if test -e "$destination" || test -L "$destination"; then
+  echo "repository destination $destination already exists" >&2
+  exit 1
+fi
 bundle_heads="$(git bundle list-heads "$bundle_file")"
 if test "$bundle_heads" != "$object $ref"; then
   echo "repository bundle does not match selected ref $ref at $object" >&2
   exit 1
 fi
+staging_root="$(mktemp -d /workspace/work/.paw-repository.XXXXXX)"
+staging="$staging_root/repository"
 git -c init.defaultBranch=paw-detached init --quiet --template= "$staging"
 git -C "$staging" bundle unbundle "$bundle_file" >/dev/null
 test "$(git -C "$staging" rev-parse --verify "$object^{commit}")" = "$commit"

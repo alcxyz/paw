@@ -118,6 +118,22 @@
             };
           };
           codex-cli = pawLib.mkCodexCli { inherit pkgs; };
+          paw-backup-helper = pkgs.buildGoModule {
+            pname = "paw-backup-helper";
+            version = "0.0.0-dev";
+            src = ./.;
+            vendorHash = null;
+            subPackages = [ "cmd/paw-backup-helper" ];
+            env.CGO_ENABLED = "0";
+            ldflags = [
+              "-s"
+              "-w"
+            ];
+            doCheck = false; # The paw check runs the complete Go test suite.
+          };
+          paw-backup-helper-image = pkgs.callPackage ./nix/images/paw-backup-helper.nix {
+            helper = paw-backup-helper;
+          };
           t3code-headless = pawLib.mkT3codeHeadless { inherit pkgs; };
           codex-runtime = pkgs.callPackage ./nix/packages/codex-runtime.nix {
             codexCli = codex-cli;
@@ -254,11 +270,12 @@
           };
         in
         {
-          inherit codex-cli paw;
+          inherit codex-cli paw paw-backup-helper;
           default = paw;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           inherit
+            paw-backup-helper-image
             codex-runtime
             paw-claude-code-closure-info
             paw-claude-code-image
@@ -380,6 +397,7 @@
               ${./examples/custom-build.nix} \
               ${./scripts/ci/sandbox-probe.nix} \
               ${./nix/images/paw-core.nix} \
+              ${./nix/images/paw-backup-helper.nix} \
               ${./nix/images/report.nix} \
               ${./nix/lib/eval-profile.nix} \
               ${./nix/modules/profile.nix} \
@@ -473,6 +491,8 @@
               ''
                 bash -n ${./scripts/check-minikube-live.sh}
                 shellcheck ${./scripts/check-minikube-live.sh}
+                bash -n ${./scripts/check-backup-live.sh}
+                shellcheck ${./scripts/check-backup-live.sh}
                 bash ${./scripts/check-kubernetes-contract.sh} \
                   ${./.} \
                   ${self.packages.${system}.paw}/bin/paw
@@ -481,6 +501,13 @@
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           inherit t3code-headless;
+
+          backup-helper-image = pkgs.runCommand "paw-backup-helper-image-check" { } ''
+            image=${self.packages.${system}.paw-backup-helper-image}
+            test -s "$image"
+            test "$(stat -c %s "$image")" -le $((32 * 1024 * 1024))
+            touch "$out"
+          '';
 
           custom-build-example =
             let

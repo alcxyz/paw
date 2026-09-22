@@ -352,6 +352,7 @@ kubectl --context "$context" --namespace "$namespace" exec workspace-0 -- sh -ce
   printf "%s\n" staged-change > .paw-staged-test
   git add -- .paw-staged-test
   printf "%s\n" untracked-change > .paw-untracked-test
+  mkdir -p .git/info
   printf "%s\n" .paw-ignored-test >> .git/info/exclude
   printf "%s\n" ignored-change > .paw-ignored-test
 ' >/dev/null

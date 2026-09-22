@@ -13,6 +13,7 @@
 | [ADR-009](ADR-009-portable-build-inputs-and-scheduled-updates.md) | Portable build inputs and scheduled dependency updates | Accepted |
 | [ADR-010](ADR-010-github-first-and-hosted-ci.md) | Public GitHub-first hosting and hosted CI | Accepted |
 | [ADR-011](ADR-011-state-preserving-workspace-upgrades.md) | State-preserving workspace upgrades | Accepted |
+| [ADR-012](ADR-012-offline-backup-and-empty-target-restore.md) | Offline backup and empty-target restore | Accepted |
 
 ## Statuses
 
