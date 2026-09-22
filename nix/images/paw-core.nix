@@ -78,7 +78,10 @@ dockerTools.buildLayeredImage {
       "XDG_CACHE_HOME=/workspace/state/cache"
       "XDG_CONFIG_HOME=/workspace/state/config"
       "XDG_DATA_HOME=/workspace/state/data"
-    ];
+    ]
+    # Keep Claude Code to its provider endpoints: no telemetry, error
+    # reporting, update checks, or marketplace traffic under bounded egress.
+    ++ lib.optional (builtins.elem "claude-code" providers) "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1";
     ExposedPorts = {
       "3773/tcp" = { };
     };

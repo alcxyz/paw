@@ -259,6 +259,17 @@ func TestEgressDestinationsResolveByProvider(t *testing.T) {
 	if strings.Join(hosts, ",") != "auth.openai.com,chatgpt.com,api.openai.com" {
 		t.Fatalf("unexpected codex destinations %v", hosts)
 	}
+	claude, err := EgressDestinations(Selection{Profile: "core", Provider: "claude-code"})
+	if err != nil {
+		t.Fatalf("EgressDestinations returned an error: %v", err)
+	}
+	claudeHosts := make([]string, 0, len(claude))
+	for _, destination := range claude {
+		claudeHosts = append(claudeHosts, destination.Host)
+	}
+	if strings.Join(claudeHosts, ",") != "claude.ai,platform.claude.com,api.anthropic.com" {
+		t.Fatalf("unexpected claude-code destinations %v", claudeHosts)
+	}
 	none, err := EgressDestinations(Selection{Profile: "core", Provider: "none"})
 	if err != nil || len(none) != 0 {
 		t.Fatalf("provider none should resolve to no destinations, got %v, %v", none, err)
