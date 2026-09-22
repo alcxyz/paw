@@ -20,9 +20,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             self.assertNotIn("pull_request_target", text)
             self.assertNotIn("secrets.", text)
             self.assertNotIn("continue-on-error", text)
-            self.assertIn("sandbox = true", text)
-            self.assertIn("sandbox-fallback = false", text)
-            self.assertIn('github_access_token: ""', text)
+            self.assertIn("run: bash scripts/ci/install-nix.sh", text)
             self.assertIn("runs-on: ubuntu-24.04", text)
 
     def test_schedule_is_proposal_only(self):
@@ -47,6 +45,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             steps = text.split("      - ")
             for step in steps:
                 if ("run: bash scripts/ci/check.sh" in step
+                        or "run: bash scripts/ci/install-nix.sh" in step
                         or "run: bash scripts/ci/check-sandbox.sh" in step
                         or "scripts/update-dependencies.py" in step):
                     self.assertIn('GITHUB_TOKEN: ""', step)

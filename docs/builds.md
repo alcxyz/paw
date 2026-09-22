@@ -162,13 +162,17 @@ repository-token permission, and then observe the scheduled run. Do not report
 the scheduler as proven merely because local unit tests pass. See the
 [GitHub scheduling reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
 
-Validation uses a standard GitHub-hosted Ubuntu VM with read-only repository
+Validation uses a standard GitHub-hosted Ubuntu 24.04 VM with read-only repository
 permissions. The update job alone declares `contents: write` and
 `pull-requests: write`; its token is supplied only to pending-review and
 publication steps. The repository must allow GitHub Actions to create pull
-requests. The Nix installer explicitly receives no GitHub access token, so Nix
-configuration does not retain the workflow credential. Schedule timing is best
-effort, not an exact delivery guarantee.
+requests. `scripts/ci/install-nix.sh` installs the official, SHA-256-pinned Nix
+archive in daemon mode. It is restricted to fresh GitHub-hosted Linux amd64
+VMs and must not be run as a workstation bootstrap script. Daemon mode avoids
+the hosted image's restrictions on single-user namespace creation without
+disabling AppArmor or Nix sandboxing. The installer receives no GitHub access
+token, so Nix configuration does not retain the workflow credential. Schedule
+timing is best effort, not an exact delivery guarantee.
 
 The first lane builds Linux amd64. Native ARM images, authenticated provider
 smoke tests, and candidate registry publication remain separate qualification

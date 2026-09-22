@@ -36,17 +36,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           BASE_BRANCH: dev
         run: python3 scripts/ci/publish-update.py --check-open
-      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+      - name: Install pinned sandboxed Nix daemon
         if: steps.pending.outputs.open != 'true'
-        with:
-          github_access_token: ""
-          enable_kvm: false
-          nix_conf: |
-            experimental-features = nix-command flakes
-            sandbox = true
-            sandbox-fallback = false
-            max-jobs = 2
-            cores = 2
+        env:
+          GITHUB_TOKEN: ""
+        run: bash scripts/ci/install-nix.sh
       - name: Verify local Nix sandbox capability
         if: steps.pending.outputs.open != 'true'
         env:

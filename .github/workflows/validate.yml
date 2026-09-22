@@ -18,16 +18,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
-        with:
-          github_access_token: ""
-          enable_kvm: false
-          nix_conf: |
-            experimental-features = nix-command flakes
-            sandbox = true
-            sandbox-fallback = false
-            max-jobs = 2
-            cores = 2
+      - name: Install pinned sandboxed Nix daemon
+        env:
+          GITHUB_TOKEN: ""
+        run: bash scripts/ci/install-nix.sh
       - name: Validate pinned build and image contracts
         env:
           GITHUB_TOKEN: ""
