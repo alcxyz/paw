@@ -14,6 +14,7 @@
 | [ADR-010](ADR-010-github-first-and-hosted-ci.md) | Public GitHub-first hosting and hosted CI | Accepted |
 | [ADR-011](ADR-011-state-preserving-workspace-upgrades.md) | State-preserving workspace upgrades | Accepted |
 | [ADR-012](ADR-012-offline-backup-and-empty-target-restore.md) | Offline backup and empty-target restore | Accepted |
+| [ADR-013](ADR-013-per-workspace-bounded-egress-proxy.md) | Per-workspace bounded egress proxy | Accepted |
 
 ## Statuses
 
