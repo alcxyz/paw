@@ -85,6 +85,64 @@ func TestAddRejectsUnsafeDestinationNameBeforeExecution(t *testing.T) {
 	}
 }
 
+func TestAddDoesNotDeadlockWhenRemoteRejectsBeforeReadingBundle(t *testing.T) {
+	source := newTestRepository(t)
+	bin := t.TempDir()
+	kubectl := filepath.Join(bin, "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nexit 42\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result := make(chan error, 1)
+	go func() {
+		result <- Add(Request{
+			Context:  "paw-local",
+			Name:     "selected",
+			Revision: "refs/heads/main",
+			Source:   source,
+		}, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "materialize repository") {
+			t.Fatalf("expected remote rejection, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("repository import deadlocked after remote rejection")
+	}
+}
+
+func TestAddCompletesLargeBundleThroughOSPipe(t *testing.T) {
+	source := newTestRepository(t)
+	if err := os.WriteFile(filepath.Join(source, "large.bin"), bytes.Repeat([]byte("paw"), 256*1024), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTestRun(t, source, "add", "large.bin")
+	gitTestRun(t, source, "-c", "user.name=PAW test", "-c", "user.email=paw-test.invalid", "commit", "--message=large")
+
+	bin := t.TempDir()
+	kubectl := filepath.Join(bin, "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\ncat >/dev/null\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout bytes.Buffer
+	if err := Add(Request{
+		Context:  "paw-local",
+		Name:     "selected",
+		Revision: "refs/heads/main",
+		Source:   source,
+	}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("large repository import failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "repository selected materialized at ") {
+		t.Fatalf("missing successful materialization message: %q", stdout.String())
+	}
+}
+
 func TestFinishAddPrefersWorkspaceFailureOverBundlePipeFailure(t *testing.T) {
 	kubectlErr := errors.New("destination already exists")
 	bundleErr := errors.New("broken pipe")
@@ -206,6 +264,44 @@ func TestMaterializationRefusesExistingDestinations(t *testing.T) {
 	}
 }
 
+func TestMaterializationDrainsBundleBeforeExistingDestinationCheck(t *testing.T) {
+	source := newTestRepository(t)
+	selected, err := resolve(source, "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := newMaterializationHarness(t, selected)
+	if err := os.Mkdir(harness.destination, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(harness.destination, "preserved"), "original")
+
+	command := harness.command(nil)
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	command.Stdout, command.Stderr = &output, &output
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	payload := append(createTestBundle(t, selected), bytes.Repeat([]byte("padding"), 256*1024)...)
+	if _, err := stdin.Write(payload); err != nil {
+		t.Fatalf("materializer stopped reading before draining the bundle: %v", err)
+	}
+	if err := stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Wait(); err == nil || !strings.Contains(output.String(), "already exists") {
+		t.Fatalf("expected existing destination refusal, got %v: %s", err, output.String())
+	}
+	if content, err := os.ReadFile(filepath.Join(harness.destination, "preserved")); err != nil || string(content) != "original" {
+		t.Fatalf("existing content changed: %q, %v", content, err)
+	}
+	harness.assertCleaned(t)
+}
+
 func TestMaterializationCleansBundleWhenStagingCreationFails(t *testing.T) {
 	harness := newMaterializationHarness(t, selection{})
 	if err := os.Remove(harness.work); err != nil {
@@ -219,6 +315,11 @@ func TestMaterializationCleansBundleWhenStagingCreationFails(t *testing.T) {
 
 func TestMaterializationRefusesConcurrentDestination(t *testing.T) {
 	source := newTestRepository(t)
+	if err := os.WriteFile(filepath.Join(source, "large.bin"), bytes.Repeat([]byte("paw"), 256*1024), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTestRun(t, source, "add", "large.bin")
+	gitTestRun(t, source, "-c", "user.name=PAW test", "-c", "user.email=paw-test.invalid", "commit", "--message=large")
 	selected, err := resolve(source, "refs/heads/main")
 	if err != nil {
 		t.Fatal(err)
@@ -233,6 +334,12 @@ func TestMaterializationRefusesConcurrentDestination(t *testing.T) {
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
 	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdin.Write(createTestBundle(t, selected)); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdin.Close(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
@@ -254,12 +361,6 @@ func TestMaterializationRefusesConcurrentDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(harness.destination, "preserved"), "concurrent")
-	if _, err := stdin.Write(createTestBundle(t, selected)); err != nil {
-		t.Fatal(err)
-	}
-	if err := stdin.Close(); err != nil {
-		t.Fatal(err)
-	}
 	if err := command.Wait(); err == nil || !strings.Contains(output.String(), "appeared during materialization") {
 		t.Fatalf("expected concurrent destination refusal: %v: %s", err, output.String())
 	}

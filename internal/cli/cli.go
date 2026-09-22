@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +25,7 @@ import (
 
 type pathLookup func(string) (string, error)
 type commandRunner func(string, []string, io.Writer, io.Writer) error
+type inputCommandRunner func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error
 type manifestMaterializer func(deployment.ManifestRequest) (string, func(), error)
 type repositoryAdder func(repository.Request, io.Writer, io.Writer) error
 type repositoryExporter func(context.Context, repository.ExportRequest) error
@@ -32,6 +34,7 @@ type environmentVerifier func(context.Context, environment.Request) (environment
 type dependencies struct {
 	lookPath    pathLookup
 	runCommand  commandRunner
+	runInput    inputCommandRunner
 	materialize manifestMaterializer
 	addRepo     repositoryAdder
 	exportRepo  repositoryExporter
@@ -47,6 +50,7 @@ func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
 	return runWithDependencies(args, stdout, stderr, dependencies{
 		lookPath:    lookPath,
 		runCommand:  executeCommand,
+		runInput:    executeCommandWithInput,
 		materialize: deployment.MaterializeManifest,
 		addRepo:     repository.Add,
 		exportRepo:  repository.Export,
@@ -170,17 +174,21 @@ func environmentUsage() string {
 }
 
 type workspaceOptions struct {
-	adapter     string
-	context     string
-	deleteState bool
-	imageRef    string
-	jsonOutput  bool
-	label       string
-	localPort   int
-	pairingID   string
-	profile     string
-	provider    string
-	ttl         string
+	adapter             string
+	backupInput         string
+	backupOutput        string
+	confirmEmptyRestore bool
+	context             string
+	deleteState         bool
+	imageRef            string
+	helperImageRef      string
+	jsonOutput          bool
+	label               string
+	localPort           int
+	pairingID           string
+	profile             string
+	provider            string
+	ttl                 string
 }
 
 func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) int {
@@ -188,7 +196,7 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 		return runWorkspaceRepository(args[1:], stdout, stderr, deps)
 	}
 	if len(args) == 0 || !slices.Contains(
-		[]string{"render", "create", "inspect", "connect", "pair", "revoke", "upgrade-check", "destroy"},
+		[]string{"render", "create", "inspect", "connect", "pair", "revoke", "upgrade-check", "backup", "restore", "destroy"},
 		args[0],
 	) {
 		return usageError(stderr, workspaceUsage())
@@ -244,12 +252,47 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	if !slices.Contains([]string{"render", "create"}, operation) && options.imageRef != "" {
 		return usageError(stderr, "--image-ref is only valid for workspace render and create")
 	}
+	if operation != "backup" && options.backupOutput != "" {
+		return usageError(stderr, "--output is only valid for workspace backup")
+	}
+	if operation != "restore" && options.backupInput != "" {
+		return usageError(stderr, "--input is only valid for workspace restore")
+	}
+	if operation != "restore" && options.confirmEmptyRestore {
+		return usageError(stderr, "--confirm-empty-restore is only valid for workspace restore")
+	}
+	if !slices.Contains([]string{"backup", "restore"}, operation) && options.helperImageRef != "" {
+		return usageError(stderr, "--helper-image-ref is only valid for workspace backup and restore")
+	}
+	if operation == "backup" && options.backupOutput == "" {
+		return usageError(stderr, "workspace backup requires --output")
+	}
+	if operation == "restore" && (options.backupInput == "" || !options.confirmEmptyRestore) {
+		return usageError(stderr, "workspace restore requires --input and --confirm-empty-restore")
+	}
+	if slices.Contains([]string{"backup", "restore"}, operation) {
+		if options.adapter == deployment.AdapterKubernetes && options.helperImageRef == "" {
+			return usageError(stderr, "adapter kubernetes requires --helper-image-ref for workspace backup and restore")
+		}
+		if options.adapter == deployment.AdapterMinikube && options.helperImageRef != "" {
+			return usageError(stderr, "adapter minikube does not accept --helper-image-ref")
+		}
+		if options.helperImageRef != "" {
+			if err := validateBackupHelperImage(options.helperImageRef); err != nil {
+				return usageError(stderr, err.Error())
+			}
+		}
+	}
 
 	switch operation {
 	case "inspect":
 		return runWorkspaceInspect(options, stdout, stderr, deps)
 	case "upgrade-check":
 		return runWorkspaceUpgradeCheck(options, stdout, stderr, deps)
+	case "backup":
+		return runWorkspaceBackup(options, stdout, stderr, deps)
+	case "restore":
+		return runWorkspaceRestore(options, stdout, stderr, deps)
 	case "connect":
 		return runWorkspaceConnect(options, stdout, stderr, deps)
 	case "pair":
@@ -529,6 +572,38 @@ func parseWorkspaceOptions(args []string) (workspaceOptions, error) {
 				return workspaceOptions{}, fmt.Errorf("--context may only be specified once")
 			}
 			result.context = args[index]
+		case "--output":
+			index++
+			if optionValueMissing(args, index) {
+				return workspaceOptions{}, fmt.Errorf("--output requires a value")
+			}
+			if result.backupOutput != "" {
+				return workspaceOptions{}, fmt.Errorf("--output may only be specified once")
+			}
+			result.backupOutput = args[index]
+		case "--input":
+			index++
+			if optionValueMissing(args, index) {
+				return workspaceOptions{}, fmt.Errorf("--input requires a value")
+			}
+			if result.backupInput != "" {
+				return workspaceOptions{}, fmt.Errorf("--input may only be specified once")
+			}
+			result.backupInput = args[index]
+		case "--helper-image-ref":
+			index++
+			if optionValueMissing(args, index) {
+				return workspaceOptions{}, fmt.Errorf("--helper-image-ref requires a value")
+			}
+			if result.helperImageRef != "" {
+				return workspaceOptions{}, fmt.Errorf("--helper-image-ref may only be specified once")
+			}
+			result.helperImageRef = args[index]
+		case "--confirm-empty-restore":
+			if result.confirmEmptyRestore {
+				return workspaceOptions{}, fmt.Errorf("--confirm-empty-restore may only be specified once")
+			}
+			result.confirmEmptyRestore = true
 		case "--image-ref":
 			index++
 			if optionValueMissing(args, index) {
@@ -623,6 +698,8 @@ func workspaceUsage() string {
   paw workspace create --adapter ADAPTER --context CONTEXT --profile PROFILE --provider PROVIDER [--image-ref IMAGE@DIGEST]
   paw workspace inspect --adapter ADAPTER --context CONTEXT [--json]
   paw workspace upgrade-check --adapter ADAPTER --context CONTEXT
+  paw workspace backup --adapter ADAPTER --context CONTEXT --output ABSOLUTE_NEW_DIRECTORY [--helper-image-ref IMAGE@DIGEST]
+  paw workspace restore --adapter ADAPTER --context CONTEXT --input ABSOLUTE_BACKUP_DIRECTORY --confirm-empty-restore [--helper-image-ref IMAGE@DIGEST]
   paw workspace connect --adapter ADAPTER --context CONTEXT [--local-port PORT]
   paw workspace pair --adapter ADAPTER --context CONTEXT [--local-port PORT] [--ttl TTL] [--label LABEL] [--json]
   paw workspace revoke --adapter ADAPTER --context CONTEXT --pairing-id ID
@@ -646,6 +723,36 @@ func executeCommand(name string, args []string, stdout, stderr io.Writer) error 
 	defer signal.Stop(signals)
 
 	return executeCommandWithSignals(name, args, stdout, stderr, signals)
+}
+
+func executeCommandWithInput(
+	ctx context.Context,
+	name string,
+	args []string,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+) error {
+	command := exec.CommandContext(ctx, name, args...)
+	command.Stdin = stdin
+	command.Stdout = stdout
+	command.Stderr = stderr
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.WaitDelay = 5 * time.Second
+	command.Cancel = func() error {
+		if command.Process == nil {
+			return os.ErrProcessDone
+		}
+		err := syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	err := command.Run()
+	if ctx.Err() != nil && command.Process != nil {
+		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	}
+	return err
 }
 
 func executeCommandWithSignals(
