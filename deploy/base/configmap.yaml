@@ -9,4 +9,4 @@ data:
   contract-version: v0
   profile: core
   provider: none
-  state-policy: ephemeral
+  state-policy: retain-until-destroy

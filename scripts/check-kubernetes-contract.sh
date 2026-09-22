@@ -55,6 +55,44 @@ expect_security_rejection() {
   fi
 }
 
+assert_storage_layout() {
+  jq --exit-status '
+    ([.[] | select(.kind == "PersistentVolumeClaim")] | length) == 2 and
+    ([.[] | select(.kind == "PersistentVolumeClaim") | .metadata.name] | sort) ==
+      ["workspace-state", "workspace-work"] and
+    all([.[] | select(.kind == "PersistentVolumeClaim")][];
+      .metadata.labels["paw.alc.xyz/managed-by"] == "paw" and
+      .metadata.annotations["paw.alc.xyz/state-policy"] == "retain-until-destroy" and
+      .spec.accessModes == ["ReadWriteOnce"] and
+      .spec.resources.requests.storage == "10Gi") and
+    ([.[] | select(.kind == "StatefulSet")] | length) == 1 and
+    ([.[] | select(.kind == "StatefulSet")][0].spec | has("volumeClaimTemplates") | not) and
+    ([.[] | select(.kind == "StatefulSet")][0] |
+      .metadata.annotations["paw.alc.xyz/storage-layout"] == "persistent-v1" and
+      .spec.template.metadata.annotations["paw.alc.xyz/storage-layout"] == "persistent-v1" and
+      [.spec.template.spec.containers[] | select(.name == "t3") |
+        .volumeMounts[] | select(.name == "state") | .mountPath] == ["/workspace/state"] and
+      [.spec.template.spec.containers[] | select(.name == "t3") |
+        .volumeMounts[] | select(.name == "work") | .mountPath] == ["/workspace/work"] and
+      [.spec.template.spec.volumes[] | select(.name == "state") |
+        .persistentVolumeClaim.claimName] == ["workspace-state"] and
+      [.spec.template.spec.volumes[] | select(.name == "work") |
+        .persistentVolumeClaim.claimName] == ["workspace-work"] and
+      [.spec.template.spec.volumes[] | select(.name == "tmp") | has("emptyDir")] == [true] and
+      ([.spec.template.spec.volumes[] | select(has("emptyDir")) | .name] == ["tmp"]))
+  ' "$1" >/dev/null
+}
+
+expect_storage_rejection() {
+  local description=$1
+  local manifest=$2
+
+  if assert_storage_layout "$manifest"; then
+    echo "storage contract accepted $description" >&2
+    exit 1
+  fi
+}
+
 kubectl kustomize "$repo_root/deploy/base" >"$check_dir/base.yaml"
 kubectl kustomize "$repo_root/deploy/adapters/kubernetes" >"$check_dir/kubernetes.yaml"
 kubectl kustomize "$repo_root/deploy/adapters/minikube" >"$check_dir/minikube.yaml"
@@ -62,6 +100,10 @@ kubectl kustomize "$repo_root/deploy/adapters/minikube" >"$check_dir/minikube.ya
 yq eval-all -o=json '[.]' "$check_dir/base.yaml" >"$check_dir/base.json"
 yq eval-all -o=json '[.]' "$check_dir/kubernetes.yaml" >"$check_dir/kubernetes.json"
 yq eval-all -o=json '[.]' "$check_dir/minikube.yaml" >"$check_dir/minikube.json"
+
+assert_storage_layout "$check_dir/base.json"
+assert_storage_layout "$check_dir/kubernetes.json"
+assert_storage_layout "$check_dir/minikube.json"
 
 jq --exit-status '
   ([.[] | select(.kind == "StatefulSet")] | length) == 1 and
@@ -72,6 +114,10 @@ jq --exit-status '
     .metadata.annotations["paw.alc.xyz/profile"]) == "core" and
   ([.[] | select(.kind == "StatefulSet")][0] |
     .metadata.annotations["paw.alc.xyz/provider"]) == "none" and
+  ([.[] | select(.kind == "StatefulSet")][0] |
+    .metadata.annotations["paw.alc.xyz/storage-layout"]) == "persistent-v1" and
+  ([.[] | select(.kind == "StatefulSet")][0] |
+    .spec.template.metadata.annotations["paw.alc.xyz/storage-layout"]) == "persistent-v1" and
   ([.[] | select(.kind == "StatefulSet")][0] |
     .spec.template.spec.automountServiceAccountToken) == false and
   ([.[] | select(.kind == "StatefulSet")][0] |
@@ -105,8 +151,33 @@ jq --exit-status '
     ["--log-level", "warn", "start", "--mode", "web", "--host", "0.0.0.0",
       "--port", "3773", "--base-dir", "/workspace/state/t3", "--no-browser",
       "/workspace/work"] and
-  ([.[] | select(.kind == "PersistentVolumeClaim")][0] |
-    .spec.accessModes) == ["ReadWriteOnce"] and
+  ([.[] | select(.kind == "PersistentVolumeClaim")] | length) == 2 and
+  ([.[] | select(.kind == "PersistentVolumeClaim") | .metadata.name] | sort) ==
+    ["workspace-state", "workspace-work"] and
+  all([.[] | select(.kind == "PersistentVolumeClaim")][];
+    .metadata.labels["app.kubernetes.io/name"] == "paw" and
+    .metadata.labels["app.kubernetes.io/component"] == "workspace" and
+    .metadata.labels["paw.alc.xyz/managed-by"] == "paw" and
+    .metadata.annotations["paw.alc.xyz/state-policy"] == "retain-until-destroy" and
+    .spec.accessModes == ["ReadWriteOnce"] and
+    .spec.resources.requests.storage == "10Gi") and
+  ([.[] | select(.kind == "PersistentVolumeClaim") |
+    select(.metadata.name == "workspace-state" or .metadata.name == "workspace-work")] | length) == 2 and
+  ([.[] | select(.kind == "StatefulSet")][0] | has("spec") and
+    (.spec | has("volumeClaimTemplates") | not)) and
+  ([.[] | select(.kind == "StatefulSet")][0] |
+    [.spec.template.spec.volumes[] | select(.name == "state") |
+      .persistentVolumeClaim.claimName] == ["workspace-state"] and
+    [.spec.template.spec.volumes[] | select(.name == "work") |
+      .persistentVolumeClaim.claimName] == ["workspace-work"] and
+    [.spec.template.spec.volumes[] | select(.name == "tmp") | has("emptyDir")] == [true] and
+    ([.spec.template.spec.volumes[] | select(has("emptyDir")) | .name] == ["tmp"]) and
+    [.spec.template.spec.containers[0].volumeMounts[] |
+      select(.name == "state") | .mountPath] == ["/workspace/state"] and
+    [.spec.template.spec.containers[0].volumeMounts[] |
+      select(.name == "work") | .mountPath] == ["/workspace/work"] and
+    [.spec.template.spec.containers[0].volumeMounts[] |
+      select(.name == "tmp") | .mountPath] == ["/tmp"]) and
   ([.[] | select(.kind == "Role")][0] | .rules) == [] and
   ([.[] | select(.kind == "NetworkPolicy")][0] |
     .spec.policyTypes | sort) == ["Egress", "Ingress"] and
@@ -114,7 +185,8 @@ jq --exit-status '
   ([.[] | select(.kind == "NetworkPolicy")][0] | .spec.egress) == [] and
   ([.[] | select(.kind == "Secret")] | length) == 0 and
   ([.[] | select(.kind == "ConfigMap")][0] |
-    .data.profile == "core" and .data.provider == "none") and
+    .data.profile == "core" and .data.provider == "none" and
+    .data["state-policy"] == "retain-until-destroy") and
   ([.. | objects | select(has("hostPath"))] | length) == 0
 ' "$check_dir/base.json" >/dev/null
 
@@ -193,6 +265,27 @@ jq 'map(if .kind == "StatefulSet" then
     }
   }] else . end)' "$check_dir/base.json" >"$check_dir/unsafe-init.json"
 expect_security_rejection "a privileged init container" "$check_dir/unsafe-init.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.template.spec.volumes |= map(
+    if .name == "work" then {"name":"work","emptyDir":{}} else . end
+  )
+  else . end)' "$check_dir/base.json" >"$check_dir/ephemeral-work.json"
+expect_storage_rejection "an ephemeral work volume" "$check_dir/ephemeral-work.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  (.spec.template.spec.volumes[] | select(.name == "work").persistentVolumeClaim.claimName) = "workspace-state"
+  else . end)' "$check_dir/base.json" >"$check_dir/shared-claim.json"
+expect_storage_rejection "aliased work and state claims" "$check_dir/shared-claim.json"
+
+jq 'map(select(.kind != "PersistentVolumeClaim" or .metadata.name != "workspace-work"))' \
+  "$check_dir/base.json" >"$check_dir/missing-work-claim.json"
+expect_storage_rejection "a missing work claim" "$check_dir/missing-work-claim.json"
+
+jq 'map(if .kind == "StatefulSet" then
+  .spec.volumeClaimTemplates = []
+  else . end)' "$check_dir/base.json" >"$check_dir/claim-template.json"
+expect_storage_rejection "a StatefulSet claim template" "$check_dir/claim-template.json"
 
 if [[ -n "$paw_binary" ]]; then
   while read -r profile provider image; do

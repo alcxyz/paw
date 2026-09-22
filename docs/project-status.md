@@ -25,3 +25,10 @@ retain historical issue numbers; use this map for current planning.
 
 The previous private repository remains a historical source copy. It is not a
 second authoritative tracker or a required CI gate.
+
+## State-preserving upgrades
+
+[Issue #14](https://github.com/alcxyz/paw/issues/14) tracks persistent repository
+storage, read-only preflight, consistent backup/recovery, controlled single-writer
+upgrades, and explicit legacy migration in the focused-pilot milestone. See
+[the upgrade guide](upgrades.md) for the implemented stage and remaining limits.

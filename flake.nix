@@ -369,6 +369,7 @@
                   ${./docs}/builds.md \
                   ${./docs}/pilot.md \
                   ${./docs}/project-status.md \
+                  ${./docs}/upgrades.md \
                   ${./docs}/adr/*.md
                 touch "$out"
               '';

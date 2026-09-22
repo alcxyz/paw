@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-07
+- Upgrade/storage scope extended by ADR-011; create and destroy remain explicit.
 
 ## Context
 

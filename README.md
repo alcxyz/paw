@@ -82,6 +82,7 @@ paw workspace render --adapter minikube --profile core --provider codex
 paw workspace create --adapter minikube --context minikube \
   --profile platform-readonly --provider opencode
 paw workspace inspect --adapter minikube --context minikube
+paw workspace upgrade-check --adapter minikube --context minikube
 paw workspace connect --adapter minikube --context minikube
 paw workspace pair --adapter minikube --context minikube \
   --ttl 10m --label mac-browser
@@ -142,10 +143,18 @@ Use `workspace pair --json` when the pairing identifier must be retained for
 explicit revocation. `workspace revoke --pairing-id ID` invalidates that
 credential through the same selected pod and context.
 
-`workspace inspect --json` exposes the selected StatefulSet, pod, claim, and T3
-Service through the explicitly named Kubernetes context. The v0 destroy command
-requires `--delete-state` because the Minikube workspace state policy is
-ephemeral.
+`workspace inspect --json` exposes the selected StatefulSet, pod, state claim,
+and T3 Service through the explicitly named Kubernetes context. New workspaces
+retain T3 state and repository working copies on separate PVCs across pod
+replacement.
+The destroy command still requires `--delete-state`: explicit destruction removes
+both claims along with the namespace.
+
+`workspace upgrade-check` is read-only. It checks the current storage/workload
+layout, not backup or recovery readiness. There is no mutating upgrade command
+yet. Existing workspaces with ephemeral repository storage require a separate
+migration before any pod replacement; loading an image does not migrate them.
+See [workspace upgrades and preservation](docs/upgrades.md).
 
 `workspace destroy` requires the namespace's `paw.alc.xyz/managed-by: paw`
 ownership label and binds deletion to its UID and resource version. It refuses
@@ -328,7 +337,9 @@ failure. It verifies rollout, inspection, restricted runtime identity, absent
 service-account credentials and host runtime sockets, empty RBAC, enforced
 default-deny egress, loopback access, streamed repository materialization,
 in-memory pairing and revocation, clean logs, and deletion of the namespace and
-PVC Kubernetes objects. Backing PV and storage reclamation remain
+PVC Kubernetes objects. It also checks persistence of state and repository test
+fixtures across a stopped-writer pod replacement. This is not a backup/restore
+or T3 database-migration test. Backing PV and storage reclamation remain
 storage-adapter requirements and are not claimed by this check. Pairing
 credentials pass directly from `paw` to `jq` and are never stored or printed.
 

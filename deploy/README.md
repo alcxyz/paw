@@ -92,11 +92,14 @@ than one hour, and constructs a loopback URL matching `paw workspace connect`.
 The connection command binds only `127.0.0.1`; remote adapters must supply their
 own authenticated TLS ingress rather than widening this local tunnel.
 
-One StatefulSet replica and one `ReadWriteOnce` claim express the T3
-single-writer contract. The development claim is marked ephemeral and is
-deleted as a Kubernetes object through the PAW destroy workflow unless a future
-profile selects a different, explicit retention policy. Backing-volume
-reclamation is a storage-adapter responsibility and is not yet proven here.
+One StatefulSet replica and `ReadWriteOnce` claims express the T3
+single-writer intent; the access mode alone does not prevent two pods on one
+node from writing. New `persistent-v1` workspaces have separate state and work
+claims, both retained across pod replacement until explicit workspace destruction.
+Only temporary files use `emptyDir`. Existing ephemeral repository volumes are
+not migrated automatically. Persistent storage is not a backup; see
+[the staged upgrade contract](../docs/upgrades.md). Backing-volume reclamation
+is a storage-adapter responsibility and is not yet proven here.
 
 The manifest contract rejects host namespaces, host paths and ports, runtime
 sockets, device mounts, added capabilities, sysctls, host aliases, secret or
@@ -114,6 +117,13 @@ reclamation. The target cluster must use a CNI that enforces NetworkPolicy and
 must already contain the selected development image. The current script uses
 Minikube as a reference environment; it does not make Minikube or its selected
 network-policy implementation part of the portable deployment contract.
+
+The opt-in script also checks persistence on its own newly created workspace:
+it writes harmless state and repository fixtures, scales the writer to zero,
+waits for pod deletion, restarts it, and checks unchanged claim identities and
+preserved tracked, staged, untracked, and ignored content. This is a test path,
+not an upgrade or migration command; it refuses an existing namespace. Adding
+the test is not evidence of a live pass or of real T3 thread restoration.
 
 `paw environment verify --context CONTEXT` is the portable preflight for that
 contract. It creates only a randomly named restricted namespace, proves the

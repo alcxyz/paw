@@ -337,6 +337,53 @@ kill "$port_forward_pid" 2>/dev/null || true
 wait "$port_forward_pid" 2>/dev/null || true
 port_forward_pid=""
 
+# This script owns a newly created disposable workspace. Never use these
+# replacement steps to migrate a legacy workspace with emptyDir repositories.
+old_pod_uid=$(kubectl --context "$context" --namespace "$namespace" get pod workspace-0 -o jsonpath='{.metadata.uid}')
+state_uid=$(kubectl --context "$context" --namespace "$namespace" get pvc workspace-state -o jsonpath='{.metadata.uid}')
+work_uid=$(kubectl --context "$context" --namespace "$namespace" get pvc workspace-work -o jsonpath='{.metadata.uid}')
+[[ -n "$old_pod_uid" && -n "$state_uid" && -n "$work_uid" ]] || fail "missing persistence identities"
+"$paw_binary" workspace upgrade-check --adapter minikube --context "$context" >/dev/null
+
+kubectl --context "$context" --namespace "$namespace" exec workspace-0 -- sh -ceu '
+  printf "%s\n" state-sentinel > /workspace/state/.paw-persistence-test
+  cd /workspace/work/paw-conformance
+  printf "%s\n" tracked-change >> README.md
+  printf "%s\n" staged-change > .paw-staged-test
+  git add -- .paw-staged-test
+  printf "%s\n" untracked-change > .paw-untracked-test
+  printf "%s\n" .paw-ignored-test >> .git/info/exclude
+  printf "%s\n" ignored-change > .paw-ignored-test
+' >/dev/null
+
+kubectl --context "$context" --namespace "$namespace" --request-timeout=10s \
+  scale statefulset/workspace --replicas=0 >/dev/null
+kubectl --context "$context" --namespace "$namespace" --request-timeout=130s \
+  wait --for=delete pod/workspace-0 --timeout=120s >/dev/null
+kubectl --context "$context" --namespace "$namespace" --request-timeout=10s \
+  scale statefulset/workspace --replicas=1 >/dev/null
+kubectl --context "$context" --namespace "$namespace" --request-timeout=130s \
+  rollout status statefulset/workspace --timeout=120s >/dev/null
+
+new_pod_uid=$(kubectl --context "$context" --namespace "$namespace" get pod workspace-0 -o jsonpath='{.metadata.uid}')
+[[ -n "$new_pod_uid" && "$new_pod_uid" != "$old_pod_uid" ]] || fail "pod was not replaced"
+[[ $(kubectl --context "$context" --namespace "$namespace" get pvc workspace-state -o jsonpath='{.metadata.uid}') == "$state_uid" ]] || fail "state claim changed"
+[[ $(kubectl --context "$context" --namespace "$namespace" get pvc workspace-work -o jsonpath='{.metadata.uid}') == "$work_uid" ]] || fail "work claim changed"
+# Expand only inside the disposable workspace, never in the operator shell.
+# shellcheck disable=SC2016
+kubectl --context "$context" --namespace "$namespace" exec workspace-0 -- sh -ceu '
+  test "$(cat /workspace/state/.paw-persistence-test)" = state-sentinel
+  cd /workspace/work/paw-conformance
+  test "$(git rev-parse HEAD)" = "$1"
+  test "$(tail -n 1 README.md)" = tracked-change
+  test "$(cat .paw-staged-test)" = staged-change
+  git diff --cached --name-only -- .paw-staged-test | grep -qx .paw-staged-test
+  test "$(cat .paw-untracked-test)" = untracked-change
+  test "$(cat .paw-ignored-test)" = ignored-change
+  git check-ignore -q .paw-ignored-test
+' paw-persistence-check "$repository_commit" >/dev/null
+"$paw_binary" workspace upgrade-check --adapter minikube --context "$context" >/dev/null
+
 destroy_owned_workspace || fail "ephemeral workspace cleanup could not be verified"
 
 printf 'live Minikube conformance passed for context %s\n' "$context"

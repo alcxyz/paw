@@ -188,7 +188,7 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 		return runWorkspaceRepository(args[1:], stdout, stderr, deps)
 	}
 	if len(args) == 0 || !slices.Contains(
-		[]string{"render", "create", "inspect", "connect", "pair", "revoke", "destroy"},
+		[]string{"render", "create", "inspect", "connect", "pair", "revoke", "upgrade-check", "destroy"},
 		args[0],
 	) {
 		return usageError(stderr, workspaceUsage())
@@ -214,7 +214,7 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 		return usageError(stderr, "--delete-state is only valid for workspace destroy")
 	}
 	if operation == "destroy" && !options.deleteState {
-		return usageError(stderr, "workspace destroy requires --delete-state for the v0 ephemeral workspace")
+		return usageError(stderr, "workspace destroy requires --delete-state to delete the retained workspace claims")
 	}
 	if slices.Contains([]string{"render", "create"}, operation) && options.profile == "" {
 		return usageError(stderr, "workspace render and create require --profile")
@@ -248,6 +248,8 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	switch operation {
 	case "inspect":
 		return runWorkspaceInspect(options, stdout, stderr, deps)
+	case "upgrade-check":
+		return runWorkspaceUpgradeCheck(options, stdout, stderr, deps)
 	case "connect":
 		return runWorkspaceConnect(options, stdout, stderr, deps)
 	case "pair":
@@ -620,6 +622,7 @@ func workspaceUsage() string {
   paw workspace render --adapter ADAPTER --profile PROFILE --provider PROVIDER [--image-ref IMAGE@DIGEST]
   paw workspace create --adapter ADAPTER --context CONTEXT --profile PROFILE --provider PROVIDER [--image-ref IMAGE@DIGEST]
   paw workspace inspect --adapter ADAPTER --context CONTEXT [--json]
+  paw workspace upgrade-check --adapter ADAPTER --context CONTEXT
   paw workspace connect --adapter ADAPTER --context CONTEXT [--local-port PORT]
   paw workspace pair --adapter ADAPTER --context CONTEXT [--local-port PORT] [--ttl TTL] [--label LABEL] [--json]
   paw workspace revoke --adapter ADAPTER --context CONTEXT --pairing-id ID

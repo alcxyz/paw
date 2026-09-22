@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-21
+- Repository storage amended by ADR-011; selection and import rules are unchanged.
 
 ## Context
 
