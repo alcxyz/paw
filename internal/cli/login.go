@@ -33,7 +33,8 @@ func runWorkspaceSession(operation string, options workspaceOptions, stdout, std
 		return 1
 	}
 	recorded := statefulSet.Metadata.Annotations["paw.alc.xyz/provider"]
-	if recorded != options.provider {
+	// An "all" workspace carries every reviewed provider; log in to each one.
+	if recorded != options.provider && recorded != "all" {
 		fmt.Fprintf(stderr, "paw: workspace %s: the workspace records provider %q, not %q\n", operation, recorded, options.provider)
 		return 1
 	}
