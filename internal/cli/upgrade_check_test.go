@@ -258,7 +258,7 @@ func validUpgradeCheckFixture() upgradeCheckFixture {
 			{Name: "state", PersistentVolumeClaim: &persistentVolumeClaim{ClaimName: workspaceStateClaim}},
 			{Name: "work", PersistentVolumeClaim: &persistentVolumeClaim{ClaimName: workspaceWorkClaim}},
 			{Name: "tmp", EmptyDir: &struct{}{}},
-			{Name: "session", EmptyDir: &struct{}{}},
+			{Name: "session", PersistentVolumeClaim: &persistentVolumeClaim{ClaimName: "workspace-session"}},
 			{Name: "contract", ConfigMap: &configMapVolume{Name: "workspace-contract"}},
 		},
 	}

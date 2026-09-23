@@ -47,9 +47,15 @@ environment responsibilities outside the generic lifecycle.
 
 ## Provider login state
 
-The workspace pod mounts an in-memory `emptyDir` as the provider state
-directories under `/workspace/session` (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`),
-so a subscription login made inside the pod lives only
+The workspace pod mounts the retained `workspace-session` claim as the
+provider state directories under `/workspace/session` (`CODEX_HOME`,
+`CLAUDE_CONFIG_DIR`). A subscription login made inside the pod lasts as long as
+the provider allows: it survives pod replacement, upgrades, and restores, and
+it ends only with logout or workspace destruction. The claim is never mounted by
+the backup helper, so it is never in a backup, never restored, and never in a
+manifest or on the operator host
+([ADR-017](../docs/adr/ADR-017-retained-provider-session-claim.md), amending
+[ADR-014](../docs/adr/ADR-014-pod-scoped-provider-login-state.md)). It lives only
 for that pod's lifetime and never reaches a persistent claim, a backup, a
 manifest, or the operator host
 ([ADR-014](../docs/adr/ADR-014-pod-scoped-provider-login-state.md)).
@@ -61,8 +67,8 @@ paw workspace logout --adapter minikube --context minikube --provider codex
 
 Login runs the provider's own device or code login inside the pod through an
 interactive exec; the operator finishes the browser step on their own machine.
-The provider must match the one recorded on the workspace. Replacing the pod,
-including after backup, restore, or upgrade, discards the login.
+The provider must match the one recorded on the workspace, or be a member of an
+`all` workspace.
 
 ## Bounded egress
 
@@ -135,7 +141,7 @@ own authenticated TLS ingress rather than widening this local tunnel.
 
 One StatefulSet replica and `ReadWriteOnce` claims express the T3
 single-writer intent; the access mode alone does not prevent two pods on one
-node from writing. New `persistent-v1` workspaces have separate state and work
+node from writing. New `persistent-v2` workspaces have separate state and work
 claims, both retained across pod replacement until explicit workspace destruction.
 Only temporary files use `emptyDir`. Existing ephemeral repository volumes are
 not migrated automatically. Persistent storage is not a backup; see
