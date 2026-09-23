@@ -47,6 +47,9 @@ func runWorkspaceRepositoryLink(args []string, stdout, stderr io.Writer, deps de
 		}
 		*target = args[index]
 	}
+	if !applyUserDefaults(&adapter, &contextName, true, deps, stderr) {
+		return 1
+	}
 	if adapter == "" || contextName == "" || name == "" {
 		return usageError(stderr, workspaceRepositoryUsage())
 	}
