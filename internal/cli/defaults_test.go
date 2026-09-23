@@ -183,3 +183,22 @@ func TestInvocationLogRecordsCommandsNotOutput(t *testing.T) {
 		t.Fatalf("logs tail: %d %q", code, stdout.String())
 	}
 }
+
+func TestXDGConfigDirHonoursTheVariableOnEveryPlatform(t *testing.T) {
+	dir, err := xdgConfigDir(func(key string) string {
+		if key == "XDG_CONFIG_HOME" {
+			return "/tmp/xdg-test"
+		}
+		return ""
+	})
+	if err != nil || dir != "/tmp/xdg-test" {
+		t.Fatalf("XDG_CONFIG_HOME should win: %q %v", dir, err)
+	}
+	dir, err = xdgConfigDir(func(string) string { return "" })
+	if err != nil || filepath.Base(dir) != ".config" {
+		t.Fatalf("default should be ~/.config on every platform: %q %v", dir, err)
+	}
+	if _, err := xdgConfigDir(func(string) string { return "relative/path" }); err == nil {
+		t.Fatal("a relative XDG_CONFIG_HOME must be rejected")
+	}
+}

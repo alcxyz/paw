@@ -254,8 +254,9 @@ form shared by the Go CLI, Nix profiles, and deployment checks.
 
 PAW follows the XDG base directories. `paw config set adapter minikube` and
 `paw config set context paw-smoke` store defaults in
-`$XDG_CONFIG_HOME/paw/config.json` (usually `~/.config/paw/config.json`), after
-which every command may omit `--adapter` and `--context`; an explicit flag
+`$XDG_CONFIG_HOME/paw/config.json` (`~/.config/paw/config.json` when the
+variable is unset, on macOS too), after which every command may omit
+`--adapter` and `--context`; an explicit flag
 wins, then `PAW_ADAPTER` and `PAW_CONTEXT`, then the file. `workspace` and
 `repository` accept the aliases `ws` and `repo`.
 

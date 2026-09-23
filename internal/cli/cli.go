@@ -53,7 +53,7 @@ func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
 	log := openInvocationLog(os.Getenv)
 	deps := log.withLogging(dependencies{
 		getenv:         os.Getenv,
-		configDir:      os.UserConfigDir,
+		configDir:      func() (string, error) { return xdgConfigDir(os.Getenv) },
 		lookPath:       lookPath,
 		runCommand:     executeCommand,
 		runInput:       executeCommandWithInput,
