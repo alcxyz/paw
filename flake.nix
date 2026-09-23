@@ -115,6 +115,7 @@
             meta = {
               description = "Portable AI workspace operator";
               homepage = "https://github.com/alcxyz/paw";
+              license = pkgs.lib.licenses.mit;
               mainProgram = "paw";
             };
           };
