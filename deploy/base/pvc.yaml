@@ -31,3 +31,23 @@ spec:
   resources:
     requests:
       storage: 10Gi
+---
+# Provider login state (ADR-017): retained until destroy so a login lasts as
+# long as the provider allows, never mounted by the backup helper, so it is
+# never in an archive and never restored.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-session
+  labels:
+    app.kubernetes.io/name: paw
+    app.kubernetes.io/component: workspace
+    paw.alc.xyz/managed-by: paw
+  annotations:
+    paw.alc.xyz/state-policy: retain-until-destroy
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

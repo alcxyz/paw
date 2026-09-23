@@ -10,9 +10,12 @@ import (
 )
 
 const (
-	workspaceStorageLayout = "persistent-v1"
+	workspaceStorageLayout = "persistent-v2"
 	workspaceStateClaim    = "workspace-state"
 	workspaceWorkClaim     = "workspace-work"
+	// workspaceSessionClaim holds provider login state. It is retained until
+	// destroy but deliberately outside the backup and restore contract.
+	workspaceSessionClaim  = "workspace-session"
 	workspaceLifecycleLock = "workspace-lifecycle-lock"
 )
 
@@ -172,7 +175,7 @@ func checkWorkspaceUpgrade(contextName string, deps dependencies) error {
 		return err
 	}
 	if !hasPersistentV1Layout(statefulSet) {
-		return errors.New("legacy or missing persistent-v1 storage layout; do not stop this pod; migration is required")
+		return errors.New("legacy or missing persistent-v2 storage layout; do not stop this pod; migration is required")
 	}
 	if !validUpgradeStatefulSet(statefulSet) {
 		return errors.New("workspace writer is not in a supported steady state")
@@ -289,7 +292,8 @@ func validUpgradePodSpec(spec podSpec) bool {
 		workExists && work.PersistentVolumeClaim != nil &&
 		work.PersistentVolumeClaim.ClaimName == workspaceWorkClaim && !work.PersistentVolumeClaim.ReadOnly &&
 		tmpExists && tmp.EmptyDir != nil &&
-		sessionExists && session.EmptyDir != nil &&
+		sessionExists && session.PersistentVolumeClaim != nil &&
+		session.PersistentVolumeClaim.ClaimName == workspaceSessionClaim && !session.PersistentVolumeClaim.ReadOnly &&
 		contractExists && contract.ConfigMap != nil && contract.ConfigMap.Name == "workspace-contract"
 }
 

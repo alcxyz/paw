@@ -57,19 +57,20 @@ expect_security_rejection() {
 
 assert_storage_layout() {
   jq --exit-status '
-    ([.[] | select(.kind == "PersistentVolumeClaim")] | length) == 2 and
+    ([.[] | select(.kind == "PersistentVolumeClaim")] | length) == 3 and
     ([.[] | select(.kind == "PersistentVolumeClaim") | .metadata.name] | sort) ==
-      ["workspace-state", "workspace-work"] and
+      ["workspace-session", "workspace-state", "workspace-work"] and
     all([.[] | select(.kind == "PersistentVolumeClaim")][];
       .metadata.labels["paw.alc.xyz/managed-by"] == "paw" and
       .metadata.annotations["paw.alc.xyz/state-policy"] == "retain-until-destroy" and
       .spec.accessModes == ["ReadWriteOnce"] and
-      .spec.resources.requests.storage == "10Gi") and
+      (if .metadata.name == "workspace-session" then .spec.resources.requests.storage == "1Gi"
+        else .spec.resources.requests.storage == "10Gi" end)) and
     ([.[] | select(.kind == "StatefulSet")] | length) == 1 and
     ([.[] | select(.kind == "StatefulSet")][0].spec | has("volumeClaimTemplates") | not) and
     ([.[] | select(.kind == "StatefulSet")][0] |
-      .metadata.annotations["paw.alc.xyz/storage-layout"] == "persistent-v1" and
-      .spec.template.metadata.annotations["paw.alc.xyz/storage-layout"] == "persistent-v1" and
+      .metadata.annotations["paw.alc.xyz/storage-layout"] == "persistent-v2" and
+      .spec.template.metadata.annotations["paw.alc.xyz/storage-layout"] == "persistent-v2" and
       [.spec.template.spec.containers[] | select(.name == "t3") |
         .volumeMounts[] | select(.name == "state") | .mountPath] == ["/workspace/state"] and
       [.spec.template.spec.containers[] | select(.name == "t3") |
@@ -79,8 +80,9 @@ assert_storage_layout() {
       [.spec.template.spec.volumes[] | select(.name == "work") |
         .persistentVolumeClaim.claimName] == ["workspace-work"] and
       [.spec.template.spec.volumes[] | select(.name == "tmp") | has("emptyDir")] == [true] and
-      ([.spec.template.spec.volumes[] | select(has("emptyDir")) | .name] == ["tmp", "session"]) and
-      ([.spec.template.spec.volumes[] | select(.name == "session") | .emptyDir.medium] == ["Memory"]))
+      ([.spec.template.spec.volumes[] | select(has("emptyDir")) | .name] == ["tmp"]) and
+      [.spec.template.spec.volumes[] | select(.name == "session") |
+        .persistentVolumeClaim.claimName] == ["workspace-session"])
   ' "$1" >/dev/null
 }
 
@@ -178,9 +180,9 @@ jq --exit-status '
   ([.[] | select(.kind == "StatefulSet")][0] |
     .metadata.annotations["paw.alc.xyz/provider"]) == "none" and
   ([.[] | select(.kind == "StatefulSet")][0] |
-    .metadata.annotations["paw.alc.xyz/storage-layout"]) == "persistent-v1" and
+    .metadata.annotations["paw.alc.xyz/storage-layout"]) == "persistent-v2" and
   ([.[] | select(.kind == "StatefulSet")][0] |
-    .spec.template.metadata.annotations["paw.alc.xyz/storage-layout"]) == "persistent-v1" and
+    .spec.template.metadata.annotations["paw.alc.xyz/storage-layout"]) == "persistent-v2" and
   ([.[] | select(.kind == "StatefulSet")][0] |
     .spec.template.spec.automountServiceAccountToken) == false and
   ([.[] | select(.kind == "StatefulSet")][0] |
@@ -214,18 +216,18 @@ jq --exit-status '
     ["--log-level", "warn", "start", "--mode", "web", "--host", "0.0.0.0",
       "--port", "3773", "--base-dir", "/workspace/state/t3", "--no-browser",
       "/workspace/work"] and
-  ([.[] | select(.kind == "PersistentVolumeClaim")] | length) == 2 and
+  ([.[] | select(.kind == "PersistentVolumeClaim")] | length) == 3 and
   ([.[] | select(.kind == "PersistentVolumeClaim") | .metadata.name] | sort) ==
-    ["workspace-state", "workspace-work"] and
+    ["workspace-session", "workspace-state", "workspace-work"] and
   all([.[] | select(.kind == "PersistentVolumeClaim")][];
     .metadata.labels["app.kubernetes.io/name"] == "paw" and
     .metadata.labels["app.kubernetes.io/component"] == "workspace" and
     .metadata.labels["paw.alc.xyz/managed-by"] == "paw" and
     .metadata.annotations["paw.alc.xyz/state-policy"] == "retain-until-destroy" and
-    .spec.accessModes == ["ReadWriteOnce"] and
-    .spec.resources.requests.storage == "10Gi") and
+    .spec.accessModes == ["ReadWriteOnce"]) and
   ([.[] | select(.kind == "PersistentVolumeClaim") |
-    select(.metadata.name == "workspace-state" or .metadata.name == "workspace-work")] | length) == 2 and
+    select(.metadata.name == "workspace-state" or .metadata.name == "workspace-work") |
+    .spec.resources.requests.storage] | unique) == ["10Gi"] and
   ([.[] | select(.kind == "StatefulSet")][0] | has("spec") and
     (.spec | has("volumeClaimTemplates") | not)) and
   ([.[] | select(.kind == "StatefulSet")][0] |
@@ -234,7 +236,9 @@ jq --exit-status '
     [.spec.template.spec.volumes[] | select(.name == "work") |
       .persistentVolumeClaim.claimName] == ["workspace-work"] and
     [.spec.template.spec.volumes[] | select(.name == "tmp") | has("emptyDir")] == [true] and
-    ([.spec.template.spec.volumes[] | select(has("emptyDir")) | .name] == ["tmp", "session"]) and
+    ([.spec.template.spec.volumes[] | select(has("emptyDir")) | .name] == ["tmp"]) and
+    [.spec.template.spec.volumes[] | select(.name == "session") |
+      .persistentVolumeClaim.claimName] == ["workspace-session"] and
     [.spec.template.spec.containers[0].volumeMounts[] |
       select(.name == "session") | [.mountPath, .subPath]] ==
       [["/workspace/session/codex", "codex"], ["/workspace/session/claude", "claude"]] and

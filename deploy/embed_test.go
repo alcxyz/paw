@@ -47,14 +47,16 @@ func TestMaterializeIncludesPersistentWorkspaceStorageLayout(t *testing.T) {
 		"pvc.yaml": {
 			"name: workspace-state",
 			"name: workspace-work",
+			"name: workspace-session",
 			"paw.alc.xyz/managed-by: paw",
 			"paw.alc.xyz/state-policy: retain-until-destroy",
 			"storage: 10Gi",
 		},
 		"statefulset.yaml": {
-			"paw.alc.xyz/storage-layout: persistent-v1",
+			"paw.alc.xyz/storage-layout: persistent-v2",
 			"claimName: workspace-state",
 			"claimName: workspace-work",
+			"claimName: workspace-session",
 			"mountPath: /tmp",
 		},
 	}
