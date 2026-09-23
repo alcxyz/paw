@@ -98,7 +98,8 @@ paw workspace pair --adapter minikube --context minikube \
 paw workspace revoke --adapter minikube --context minikube --pairing-id ID
 ```
 
-Valid v0 profiles are `core` and `platform-readonly`; valid providers are
+Valid v0 profiles are `core`, `developer`, and `platform-readonly`; valid
+providers are
 `none`, `codex`, `claude-code`, and `opencode`. The rendered image and the
 StatefulSet and ConfigMap metadata are derived from that exact pair. Released
 environments use the generic adapter and immutable image reference instead of

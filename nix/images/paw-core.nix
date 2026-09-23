@@ -79,6 +79,12 @@ dockerTools.buildLayeredImage {
       "XDG_CONFIG_HOME=/workspace/state/config"
       "XDG_DATA_HOME=/workspace/state/data"
     ]
+    # The developer profile builds PAW itself: no C toolchain in the image, and
+    # no toolchain downloads because the workspace has no package egress.
+    ++ lib.optionals (profileName == "developer") [
+      "CGO_ENABLED=0"
+      "GOTOOLCHAIN=local"
+    ]
     # Provider login state lives on the in-memory session volume for one pod
     # lifetime (ADR-014), never on the persistent state claim.
     ++ lib.optional (builtins.elem "codex" providers) "CODEX_HOME=/workspace/session/codex"
