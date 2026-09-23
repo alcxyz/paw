@@ -499,3 +499,7 @@ core, provider-only, capability-only, and composed artifacts.
 This repository is public. Credentials, decrypted configuration, internal
 access details, and private operational transcripts must not be committed. See
 [AGENTS.md](AGENTS.md) for the repository's agent and secret-handling rules.
+
+## License
+
+PAW is released under the [MIT License](LICENSE).
