@@ -6,9 +6,10 @@ Do not use `workspace destroy --delete-state` followed by create as an upgrade.
 
 ## Storage contract
 
-New `persistent-v1` workspaces use separate persistent claims for T3 state
-(`/workspace/state`) and repository working copies (`/workspace/work`). Both
-claims are retained across ordinary pod replacement, including local repository
+New `persistent-v2` workspaces use separate persistent claims for T3 state
+(`/workspace/state`), repository working copies (`/workspace/work`), and
+provider login state (`workspace-session`, ADR-017). All three claims are
+retained across ordinary pod replacement, including local repository
 changes. `/tmp` remains disposable. Explicit workspace destruction deletes the
 namespace and claims; backing-volume reclamation remains environment-dependent.
 Cluster deletion, node loss, and storage failure are not covered by this policy.
@@ -65,7 +66,8 @@ Backup acquires a lifecycle lock, stops the one writer, waits for termination,
 then reads both claims through a restricted helper. On success it removes the
 helper and resumes the same runtime, checking readiness before releasing the lock.
 Finish active AI work first: browser connections and provider turns are interrupted.
-The workspace must already use `persistent-v1`; legacy workspaces are refused.
+The workspace must already use `persistent-v2`; legacy workspaces are refused.
+The session claim is never part of a backup.
 
 For `--adapter kubernetes`, also supply `--helper-image-ref` with a reviewed,
 fully qualified `paw-backup-helper@sha256:...` image. The local `:dev` helper
@@ -81,7 +83,7 @@ nix run .#paw -- workspace restore --adapter minikube \
   --confirm-empty-restore
 ```
 
-Prepare a separate PAW-managed `persistent-v1` target using the canonical
+Prepare a separate PAW-managed `persistent-v2` target using the canonical
 manifests with the StatefulSet at **zero replicas from creation**. Its state and
 work claims must be empty, and its profile, provider, and runtime reference must
 match the backup. An ordinary `workspace create` starts T3 and initializes state,
@@ -136,9 +138,11 @@ fixtures, and deletes only its own source/restore workspaces. It retains private
 artifacts for inspection. It does not qualify authenticated provider state, T3
 thread/schema migrations, or production restore readiness.
 
-Provider logins are pod-scoped (ADR-014): every pod replacement, including a
-restore or upgrade, requires `paw workspace login` again. Backups never contain
-provider credentials.
+Provider logins live on the retained `workspace-session` claim (ADR-017): a
+login survives pod replacement, restore, and upgrade for as long as the provider
+allows, and ends only with `paw workspace logout` or workspace destruction.
+Backups never contain provider credentials, and restore never writes the
+session claim.
 
 The planned upgrade deliberately interrupts browser connections and provider
 turns. Operators must finish active work before it starts. Preserve a compatible

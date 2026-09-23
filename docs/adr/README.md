@@ -15,9 +15,10 @@
 | [ADR-011](ADR-011-state-preserving-workspace-upgrades.md) | State-preserving workspace upgrades | Accepted |
 | [ADR-012](ADR-012-offline-backup-and-empty-target-restore.md) | Offline backup and empty-target restore | Accepted |
 | [ADR-013](ADR-013-per-workspace-bounded-egress-proxy.md) | Per-workspace bounded egress proxy | Accepted |
-| [ADR-014](ADR-014-pod-scoped-provider-login-state.md) | Pod-scoped provider login state | Accepted |
+| [ADR-014](ADR-014-pod-scoped-provider-login-state.md) | Pod-scoped provider login state | Accepted; amended by ADR-017 |
 | [ADR-015](ADR-015-developer-profile.md) | Developer profile for PAW self-development | Accepted |
 | [ADR-016](ADR-016-all-providers-composition.md) | All-providers image composition | Accepted |
+| [ADR-017](ADR-017-retained-provider-session-claim.md) | Retained provider session claim | Accepted |
 
 ## Statuses
 

@@ -10,7 +10,7 @@ metadata:
     paw.alc.xyz/profile: core
     paw.alc.xyz/provider: none
     paw.alc.xyz/single-writer: "true"
-    paw.alc.xyz/storage-layout: persistent-v1
+    paw.alc.xyz/storage-layout: persistent-v2
 spec:
   replicas: 1
   serviceName: t3-headless
@@ -27,7 +27,7 @@ spec:
         paw.alc.xyz/contract-version: v0
         paw.alc.xyz/profile: core
         paw.alc.xyz/provider: none
-        paw.alc.xyz/storage-layout: persistent-v1
+        paw.alc.xyz/storage-layout: persistent-v2
     spec:
       automountServiceAccountToken: false
       # Service links deliver the egress proxy address without DNS egress.
@@ -135,12 +135,11 @@ spec:
             claimName: workspace-work
         - name: tmp
           emptyDir: {}
-        # Provider login state lives here, in memory, for one pod lifetime.
-        # It is never on a persistent claim, in a backup, or in a manifest.
+        # Provider login state (ADR-017): its own retained claim, outside the
+        # backup and restore contract, so logins survive pod replacement.
         - name: session
-          emptyDir:
-            medium: Memory
-            sizeLimit: 64Mi
+          persistentVolumeClaim:
+            claimName: workspace-session
         - name: contract
           configMap:
             name: workspace-contract

@@ -1,6 +1,6 @@
 # ADR-014: Pod-scoped provider login state
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-017 (login state moved to a retained claim)
 - Date: 2026-09-22
 - Implements: ADR-003 runtime credential attachment; unblocks ADR-008 pilot gate
 
