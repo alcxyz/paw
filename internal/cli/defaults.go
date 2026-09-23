@@ -33,6 +33,24 @@ func environmentLookup(deps dependencies) func(string) string {
 	return deps.getenv
 }
 
+// xdgConfigDir resolves the XDG configuration base on every platform:
+// $XDG_CONFIG_HOME when set, otherwise ~/.config. Go's os.UserConfigDir
+// would pick Library/Application Support on macOS, which is not where a
+// terminal tool's dotfiles belong and not what Nix-managed homes expect.
+func xdgConfigDir(getenv func(string) string) (string, error) {
+	if explicit := strings.TrimSpace(getenv("XDG_CONFIG_HOME")); explicit != "" {
+		if !filepath.IsAbs(explicit) {
+			return "", errors.New("XDG_CONFIG_HOME must be an absolute path")
+		}
+		return explicit, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", errors.New("no home directory is available")
+	}
+	return filepath.Join(home, ".config"), nil
+}
+
 func userConfigPath(deps dependencies) (string, error) {
 	getenv := environmentLookup(deps)
 	if explicit := strings.TrimSpace(getenv(configEnvironmentPath)); explicit != "" {

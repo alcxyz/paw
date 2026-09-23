@@ -178,3 +178,30 @@ The first lane builds Linux amd64. Native ARM images, authenticated provider
 smoke tests, and candidate registry publication remain separate qualification
 work. Passing CI is not a completed PAW pilot. The current browser-only workspace
 is not upgraded by any of these workflows.
+
+## Apple Silicon and arm64 images
+
+The workspace images build for `aarch64-linux` and ran a full PAW workspace
+on an Apple Silicon Mac on 2026-09-23: a Minikube profile started with the
+Docker driver and Calico passed the environment verifier, and a
+`developer`/`all` workspace ran Codex, Claude Code, and Go natively on arm64
+with both provider logins completing through the egress proxy. Budgets and
+the live conformance script are still measured on x86_64 only.
+
+macOS cannot build Linux images itself; the images come from the nix-darwin
+`linux-builder` VM:
+
+```sh
+nix build .#packages.aarch64-linux.paw-developer-all-image \
+  .#packages.aarch64-linux.paw-egress-proxy-image \
+  .#packages.aarch64-linux.paw-backup-helper-image --print-out-paths
+minikube -p PROFILE image load RESULT_PATH   # for each image
+```
+
+Two builder settings matter. The default VM (1 CPU, 3 GiB, 20 GiB disk) is
+far too small: T3's dependency install fills the disk and the image
+compression needs memory, so give it several cores, at least 12 GiB, and a
+larger disk. nix-darwin sizes the disk image only when it creates it; after
+raising `virtualisation.diskSize`, stop the builder, delete
+`/var/lib/linux-builder/nixos.qcow2` (keep `keys`), and start it again.
+Finished derivations are already in the host store, so nothing is lost.
