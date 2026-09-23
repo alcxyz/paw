@@ -108,6 +108,27 @@ Mount-root permissions remain environment policy; the non-root helper cannot
 change a Kubernetes-owned volume root. Unsupported content must be
 resolved explicitly; PAW does not silently skip it.
 
+## Refreshing a local Minikube workspace
+
+For a routine image update on Minikube, with logins on the retained session
+claim and T3 state and repositories on their own claims, replacing the pod is
+enough:
+
+```sh
+nix build .#paw-developer-all-image .#paw-egress-proxy-image \
+  .#paw-backup-helper-image --print-out-paths
+minikube -p PROFILE image rm docker.io/library/paw-developer-all:dev
+minikube -p PROFILE image load RESULT_PATH   # for each of the three images
+kubectl --context CONTEXT -n paw-workspace delete pod workspace-0
+kubectl --context CONTEXT -n paw-workspace rollout restart deployment/egress
+```
+
+Remove the existing `:dev` tags before loading: on some Minikube setups a load
+whose tag already exists keeps the old image, and the replaced pod silently
+runs the previous version. Verify with the tool versions inside the new pod.
+This is the local development path only; released environments use immutable
+digests and the staged upgrade path above.
+
 ## Failure and recovery boundaries
 
 A failed or interrupted lifecycle operation retains its lock and may leave a
