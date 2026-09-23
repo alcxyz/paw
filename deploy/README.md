@@ -53,12 +53,16 @@ credential, or network inside the workspace
 ([ADR-018](../docs/adr/ADR-018-host-driven-git-transport.md)):
 
 ```sh
-git config --global protocol.ext.allow user   # Git disables ext:: by default
-git remote add paw "ext::paw workspace repository remote --adapter minikube \
-  --context minikube --name paw --service %S"
-git push paw dev      # host commits into the workspace copy, on a branch
-git fetch paw         # workspace commits back to the host
+git config --global protocol.ext.allow user   # once; Git disables ext:: by default
+cd path/to/your/clone
+paw workspace repository link --adapter minikube --context minikube --name paw
+git push paw dev:refs/heads/host-dev   # host commits into the workspace copy
+git fetch paw                          # workspace commits back to the host
 ```
+
+`link` adds a remote named `paw` whose URL is the `ext::` transport
+`paw workspace repository remote ... --service %S`; use `--remote` to name it
+differently and `--command` if `paw` is not on your PATH.
 
 Only `git-upload-pack` and `git-receive-pack` are tunnelled. Pushes land on
 branches; Git refuses to update the branch the workspace has checked out, so a

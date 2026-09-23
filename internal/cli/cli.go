@@ -381,6 +381,8 @@ func runWorkspaceRepository(args []string, stdout, stderr io.Writer, deps depend
 		return runWorkspaceRepositoryExport(args[1:], stdout, stderr, deps)
 	case "remote":
 		return runWorkspaceRepositoryRemote(args[1:], stdout, stderr, deps)
+	case "link":
+		return runWorkspaceRepositoryLink(args[1:], stdout, stderr, deps)
 	default:
 		return usageError(stderr, workspaceRepositoryUsage())
 	}
@@ -746,6 +748,7 @@ func workspaceUsage() string {
   paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME
   paw workspace repository export --adapter ADAPTER --context CONTEXT --name NAME --base-commit FULL_SHA --output ABSOLUTE_NEW_PATCH
   paw workspace repository remote --adapter ADAPTER --context CONTEXT --name NAME --service git-upload-pack|git-receive-pack
+  paw workspace repository link --adapter ADAPTER --context CONTEXT --name NAME [--remote paw] [--command paw]
   paw workspace destroy --adapter ADAPTER --context CONTEXT --delete-state
 
 ADAPTER is kubernetes or minikube. The kubernetes adapter requires immutable
@@ -758,13 +761,15 @@ func workspaceRepositoryUsage() string {
   paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME
   paw workspace repository export --adapter ADAPTER --context CONTEXT --name NAME --base-commit FULL_SHA --output ABSOLUTE_NEW_PATCH
   paw workspace repository remote --adapter ADAPTER --context CONTEXT --name NAME --service git-upload-pack|git-receive-pack
+  paw workspace repository link --adapter ADAPTER --context CONTEXT --name NAME [--remote paw] [--command paw]
 
-"remote" is a Git ext:: transport for the host: it speaks the Git protocol on
-stdin and stdout and tunnels it into the workspace repository over kubectl
-exec, so the workspace needs no remote, credential, or network. Git disables
-ext transports by default; enable them once for your user, then add the remote:
-  git config --global protocol.ext.allow user
-  git remote add paw "ext::paw workspace repository remote --adapter ADAPTER --context CONTEXT --name NAME --service %S"`
+"link" adds the workspace repository as a Git remote of the current checkout
+(default name "paw"), so plain git fetch and git push reach it. "remote" is the
+Git ext:: transport behind that remote: it speaks the Git protocol on stdin and
+stdout and tunnels it into the workspace over kubectl exec, so the workspace
+needs no remote, credential, or network. Git disables ext transports by
+default; allow them once for your user before linking:
+  git config --global protocol.ext.allow user`
 }
 
 // interactiveRunner attaches the operator's terminal to a command, for
