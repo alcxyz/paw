@@ -980,6 +980,8 @@ func workspaceTestDependencies(runner commandRunner) dependencies {
 		}
 	}
 	return dependencies{
+		getenv:     func(string) string { return "" },
+		configDir:  func() (string, error) { return "/nonexistent/paw-test-config", nil },
 		lookPath:   alwaysAvailable,
 		runCommand: runner,
 		materialize: func(request deployment.ManifestRequest) (string, func(), error) {

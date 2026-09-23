@@ -250,6 +250,21 @@ The versioned [v0 capability contract](contract/v0.json) defines the initial
 authority ceilings, trust boundaries, adapter requirements, and invariants in a
 form shared by the Go CLI, Nix profiles, and deployment checks.
 
+## Configuration and logs
+
+PAW follows the XDG base directories. `paw config set adapter minikube` and
+`paw config set context paw-smoke` store defaults in
+`$XDG_CONFIG_HOME/paw/config.json` (usually `~/.config/paw/config.json`), after
+which every command may omit `--adapter` and `--context`; an explicit flag
+wins, then `PAW_ADAPTER` and `PAW_CONTEXT`, then the file. `workspace` and
+`repository` accept the aliases `ws` and `repo`.
+
+Every invocation appends to `$XDG_STATE_HOME/paw/paw.log` (usually
+`~/.local/state/paw/paw.log`): the command, each subprocess PAW ran, exit codes,
+and timings, never command output, so pairing credentials and Git streams are
+not recorded. `paw logs path` and `paw logs tail [N]` locate and show it; attach
+it to bug reports. `PAW_LOG=0` disables it and `PAW_LOG_FILE` moves it.
+
 ## Provider model
 
 The initial provider targets are:

@@ -47,6 +47,9 @@ func runWorkspaceRepositoryRemote(args []string, stdout, stderr io.Writer, deps 
 		}
 		*target = args[index]
 	}
+	if !applyUserDefaults(&adapter, &contextName, true, deps, stderr) {
+		return 1
+	}
 	if adapter == "" || contextName == "" || name == "" || service == "" {
 		return usageError(stderr, workspaceRepositoryUsage())
 	}
