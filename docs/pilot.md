@@ -105,6 +105,16 @@ and the egress proxy log showed only `auth.openai.com` under
 `approved-provider-api`. This closes the credential-storage gate. Cross-device
 browser access, revocation effect, and the AI task itself remain open.
 
+### Both providers in one workspace, login persistence (2026-09-23)
+
+A `developer` profile workspace with the `all` composition (ADR-016) on the
+`paw-smoke` profile completed both the Codex device-code login and the
+Claude Code code login inside the pod, each through the bounded egress proxy.
+The pod was then deleted and recreated by the StatefulSet: both tools still
+reported a logged-in state from the retained `workspace-session` claim
+(ADR-017) with no re-login. This is the first pilot workspace with more than
+one authenticated provider.
+
 ## Task acceptance
 
 Runtime upgrades are a separate staged capability. New workspaces retain state
