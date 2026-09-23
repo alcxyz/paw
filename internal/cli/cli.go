@@ -379,6 +379,8 @@ func runWorkspaceRepository(args []string, stdout, stderr io.Writer, deps depend
 		return runWorkspaceRepositoryAdd(args[1:], stdout, stderr, deps)
 	case "export":
 		return runWorkspaceRepositoryExport(args[1:], stdout, stderr, deps)
+	case "remote":
+		return runWorkspaceRepositoryRemote(args[1:], stdout, stderr, deps)
 	default:
 		return usageError(stderr, workspaceRepositoryUsage())
 	}
@@ -743,6 +745,7 @@ func workspaceUsage() string {
   paw workspace revoke --adapter ADAPTER --context CONTEXT --pairing-id ID
   paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME
   paw workspace repository export --adapter ADAPTER --context CONTEXT --name NAME --base-commit FULL_SHA --output ABSOLUTE_NEW_PATCH
+  paw workspace repository remote --adapter ADAPTER --context CONTEXT --name NAME --service git-upload-pack|git-receive-pack
   paw workspace destroy --adapter ADAPTER --context CONTEXT --delete-state
 
 ADAPTER is kubernetes or minikube. The kubernetes adapter requires immutable
@@ -753,7 +756,15 @@ the reviewed local :dev images.`
 func workspaceRepositoryUsage() string {
 	return `usage:
   paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME
-  paw workspace repository export --adapter ADAPTER --context CONTEXT --name NAME --base-commit FULL_SHA --output ABSOLUTE_NEW_PATCH`
+  paw workspace repository export --adapter ADAPTER --context CONTEXT --name NAME --base-commit FULL_SHA --output ABSOLUTE_NEW_PATCH
+  paw workspace repository remote --adapter ADAPTER --context CONTEXT --name NAME --service git-upload-pack|git-receive-pack
+
+"remote" is a Git ext:: transport for the host: it speaks the Git protocol on
+stdin and stdout and tunnels it into the workspace repository over kubectl
+exec, so the workspace needs no remote, credential, or network. Git disables
+ext transports by default; enable them once for your user, then add the remote:
+  git config --global protocol.ext.allow user
+  git remote add paw "ext::paw workspace repository remote --adapter ADAPTER --context CONTEXT --name NAME --service %S"`
 }
 
 // interactiveRunner attaches the operator's terminal to a command, for

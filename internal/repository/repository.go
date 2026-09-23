@@ -33,13 +33,19 @@ type selection struct {
 	source string
 }
 
+// ValidName reports whether name is an acceptable workspace repository name:
+// 1-64 letters, digits, dots, underscores, or hyphens, and not a dot path.
+func ValidName(name string) bool {
+	return name != "." && name != ".." && repositoryName.MatchString(name)
+}
+
 // Add streams a credential-free Git bundle into the selected workspace. Only
 // committed objects reachable from the selected named ref are transferred.
 func Add(request Request, stdout, stderr io.Writer) error {
 	if request.Context == "" {
 		return fmt.Errorf("context must not be empty")
 	}
-	if request.Name == "." || request.Name == ".." || !repositoryName.MatchString(request.Name) {
+	if !ValidName(request.Name) {
 		return fmt.Errorf("repository name must use 1-64 letters, digits, dots, underscores, or hyphens")
 	}
 

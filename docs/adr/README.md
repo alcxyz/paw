@@ -19,6 +19,7 @@
 | [ADR-015](ADR-015-developer-profile.md) | Developer profile for PAW self-development | Accepted |
 | [ADR-016](ADR-016-all-providers-composition.md) | All-providers image composition | Accepted |
 | [ADR-017](ADR-017-retained-provider-session-claim.md) | Retained provider session claim | Accepted |
+| [ADR-018](ADR-018-host-driven-git-transport.md) | Host-driven Git transport into the workspace | Accepted |
 
 ## Statuses
 

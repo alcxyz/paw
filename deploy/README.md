@@ -45,6 +45,26 @@ The generic adapter also requires `--egress-image-ref`, an immutable
 Image loading, registry authentication, and release provenance remain
 environment responsibilities outside the generic lifecycle.
 
+## Host-driven Git transport
+
+Bundle import creates a workspace copy; after that the host talks to it as a
+Git remote over `kubectl exec`, with the host's own Git identity and no remote,
+credential, or network inside the workspace
+([ADR-018](../docs/adr/ADR-018-host-driven-git-transport.md)):
+
+```sh
+git config --global protocol.ext.allow user   # Git disables ext:: by default
+git remote add paw "ext::paw workspace repository remote --adapter minikube \
+  --context minikube --name paw --service %S"
+git push paw dev      # host commits into the workspace copy, on a branch
+git fetch paw         # workspace commits back to the host
+```
+
+Only `git-upload-pack` and `git-receive-pack` are tunnelled. Pushes land on
+branches; Git refuses to update the branch the workspace has checked out, so a
+push never rewrites a working tree an agent is editing. Publishing to GitHub or
+Forgejo stays a host action after review.
+
 ## Provider login state
 
 The workspace pod mounts the retained `workspace-session` claim as the
