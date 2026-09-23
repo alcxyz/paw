@@ -238,6 +238,9 @@ Profiles compose tools and authority rather than treating installed binaries as
 permissions. The first planned profiles are:
 
 - `core`: T3, provider CLIs, Git, shell utilities, and workspace lifecycle;
+- `developer`: `core` plus the Go toolchain, shellcheck, jq, and yq, so a
+  workspace can build and test PAW itself under the same workspace-only
+  authority ([ADR-015](docs/adr/ADR-015-developer-profile.md));
 - `platform-readonly`: selected repositories, infrastructure planning, and
   read-only Kubernetes and cloud inspection.
 
@@ -449,6 +452,16 @@ Useful released workspaces compose that capability with exactly one provider:
 nix build .#paw-platform-readonly-codex-image
 nix build .#paw-platform-readonly-claude-code-image
 nix build .#paw-platform-readonly-opencode-image
+```
+
+The `developer` profile is `core` plus Go, shellcheck, jq, and yq, measured and
+budgeted separately so `core` stays lean:
+
+```sh
+nix build .#paw-developer-image
+nix build .#paw-developer-codex-image
+nix build .#paw-developer-claude-code-image
+nix build .#paw-developer-opencode-image
 ```
 
 These are complete OCI images, not runtime installers. They preserve the exact

@@ -469,6 +469,10 @@ core none paw-core
 core codex paw-codex
 core claude-code paw-claude-code
 core opencode paw-opencode
+developer none paw-developer
+developer codex paw-developer-codex
+developer claude-code paw-developer-claude-code
+developer opencode paw-developer-opencode
 platform-readonly none paw-platform-readonly
 platform-readonly codex paw-platform-readonly-codex
 platform-readonly claude-code paw-platform-readonly-claude-code

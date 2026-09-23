@@ -315,54 +315,32 @@ func TestMaterializationCleansBundleWhenStagingCreationFails(t *testing.T) {
 
 func TestMaterializationRefusesConcurrentDestination(t *testing.T) {
 	source := newTestRepository(t)
-	if err := os.WriteFile(filepath.Join(source, "large.bin"), bytes.Repeat([]byte("paw"), 256*1024), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitTestRun(t, source, "add", "large.bin")
-	gitTestRun(t, source, "-c", "user.name=PAW test", "-c", "user.email=paw-test.invalid", "commit", "--message=large")
 	selected, err := resolve(source, "refs/heads/main")
 	if err != nil {
 		t.Fatal(err)
 	}
 	harness := newMaterializationHarness(t, selected)
-	command := harness.command(nil)
-	stdin, err := command.StdinPipe()
+
+	// Make the destination appear at the exact moment the script moves its
+	// staging tree into place: a PATH-shadowing mv creates it, then defers
+	// to the real mv, whose --no-clobber must leave staging untouched. This
+	// exercises the race deterministically instead of polling for it.
+	realMv, err := exec.LookPath("mv")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stdin.Close()
-	var output bytes.Buffer
-	command.Stdout, command.Stderr = &output, &output
-	if err := command.Start(); err != nil {
+	shadow := t.TempDir()
+	wrapper := "#!/bin/sh\nmkdir -p '" + harness.destination + "' && printf concurrent > '" +
+		filepath.Join(harness.destination, "preserved") + "'\nexec '" + realMv + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(shadow, "mv"), []byte(wrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stdin.Write(createTestBundle(t, selected)); err != nil {
-		t.Fatal(err)
-	}
-	if err := stdin.Close(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		entries, err := filepath.Glob(filepath.Join(harness.work, ".paw-repository.*"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(entries) == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("materialization did not reach bundle reception")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err := os.Mkdir(harness.destination, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeTestFile(t, filepath.Join(harness.destination, "preserved"), "concurrent")
-	if err := command.Wait(); err == nil || !strings.Contains(output.String(), "appeared during materialization") {
-		t.Fatalf("expected concurrent destination refusal: %v: %s", err, output.String())
+	command := harness.command(bytes.NewReader(createTestBundle(t, selected)))
+	command.Env = append(os.Environ(), "PATH="+shadow+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "appeared during materialization") {
+		t.Fatalf("expected concurrent destination refusal: %v: %s", err, output)
 	}
 	if content, err := os.ReadFile(filepath.Join(harness.destination, "preserved")); err != nil || string(content) != "concurrent" {
 		t.Fatalf("concurrent destination changed: %q, %v", content, err)

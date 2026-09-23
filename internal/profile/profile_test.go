@@ -6,8 +6,8 @@ func TestBuiltinsReturnsCopy(t *testing.T) {
 	first := Builtins()
 	second := Builtins()
 
-	if len(first) != 2 {
-		t.Fatalf("expected two built-in profiles, got %d", len(first))
+	if len(first) != 3 {
+		t.Fatalf("expected three built-in profiles, got %d", len(first))
 	}
 
 	first[0].Name = "changed"

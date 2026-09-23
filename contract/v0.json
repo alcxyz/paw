@@ -46,6 +46,33 @@
       ]
     },
     {
+      "name": "developer",
+      "description": "Core workspace plus the toolchain to build and test PAW itself.",
+      "authorityCeiling": "workspace-only",
+      "repositorySelection": "explicit",
+      "remoteGitPush": false,
+      "defaultDenyEgress": true,
+      "allowedCapabilities": [
+        "provider-session",
+        "selected-repository-read",
+        "workspace-filesystem-write"
+      ],
+      "egressPurposes": [
+        "approved-provider-api",
+        "selected-git-read"
+      ],
+      "forbiddenCapabilities": [
+        "ambient-host-filesystem",
+        "cluster-mutation",
+        "cloud-mutation",
+        "host-container-socket",
+        "production-access",
+        "remote-git-push",
+        "sops-decryption-identity",
+        "static-infrastructure-credential"
+      ]
+    },
+    {
       "name": "platform-readonly",
       "description": "Selected repositories and read-only non-production platform inspection.",
       "authorityCeiling": "read-only",
