@@ -1,4 +1,4 @@
-# PAW — Platform AI Workspace
+# PAW - Platform AI Workspace
 
 PAW is a portable, isolated collaboration environment for AI-assisted platform
 engineering. It combines a headless T3 Code server, multiple coding-agent
@@ -269,11 +269,11 @@ it to bug reports. `PAW_LOG=0` disables it and `PAW_LOG_FILE` moves it.
 
 The initial provider targets are:
 
-| Experience | T3 provider |
-| --- | --- |
-| Codex | Codex CLI |
-| Claude Code | Claude Code CLI |
-| GitHub Copilot | OpenCode CLI |
+| Experience     | T3 provider     |
+| -------------- | --------------- |
+| Codex          | Codex CLI       |
+| Claude Code    | Claude Code CLI |
+| GitHub Copilot | OpenCode CLI    |
 
 Provider binaries may be present in a shared image, but authentication state is
 attached separately. Personal credentials must never be baked into an image or
