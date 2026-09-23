@@ -250,6 +250,12 @@ The versioned [v0 capability contract](contract/v0.json) defines the initial
 authority ceilings, trust boundaries, adapter requirements, and invariants in a
 form shared by the Go CLI, Nix profiles, and deployment checks.
 
+## Architecture at a glance
+
+[docs/architecture.md](docs/architecture.md) shows the workspace topology,
+the backup path, and the image matrix as diagrams, with links to the
+decisions behind each part.
+
 ## Configuration and logs
 
 PAW follows the XDG base directories. `paw config set adapter minikube` and

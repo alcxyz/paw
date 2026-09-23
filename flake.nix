@@ -594,6 +594,7 @@
                   ${./README.md} \
                   ${./AGENTS.md} \
                   ${./deploy}/README.md \
+                  ${./docs}/architecture.md \
                   ${./docs}/builds.md \
                   ${./docs}/pilot.md \
                   ${./docs}/project-status.md \
