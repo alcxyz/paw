@@ -68,6 +68,11 @@ var imageNames = map[Selection]string{
 	{Profile: "platform-readonly", Provider: "codex"}:       "paw-platform-readonly-codex",
 	{Profile: "platform-readonly", Provider: "claude-code"}: "paw-platform-readonly-claude-code",
 	{Profile: "platform-readonly", Provider: "opencode"}:    "paw-platform-readonly-opencode",
+	// "all" composes every reviewed provider into one image so one T3 can
+	// offer them side by side; single-provider images remain the lean choice.
+	{Profile: "core", Provider: "all"}:              "paw-all",
+	{Profile: "developer", Provider: "all"}:         "paw-developer-all",
+	{Profile: "platform-readonly", Provider: "all"}: "paw-platform-readonly-all",
 }
 
 // ImageName returns the reviewed image name for a profile/provider selection.

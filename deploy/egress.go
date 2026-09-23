@@ -45,17 +45,27 @@ var providerDestinations = map[string][]EgressDestination{
 	"opencode": nil,
 }
 
+// allProviders lists the providers composed into the "all" image, in the
+// order their destinations are emitted.
+var allProviders = []string{"codex", "claude-code", "opencode"}
+
 // EgressDestinations resolves the reviewed destination list for a selection.
 func EgressDestinations(selection Selection) ([]EgressDestination, error) {
 	if _, err := ImageName(selection); err != nil {
 		return nil, err
 	}
-	destinations, exists := providerDestinations[selection.Provider]
-	if !exists {
-		return nil, fmt.Errorf("provider %q has no reviewed egress destinations", selection.Provider)
+	members := []string{selection.Provider}
+	if selection.Provider == "all" {
+		members = allProviders
 	}
-	result := make([]EgressDestination, len(destinations))
-	copy(result, destinations)
+	var result []EgressDestination
+	for _, member := range members {
+		destinations, exists := providerDestinations[member]
+		if !exists {
+			return nil, fmt.Errorf("provider %q has no reviewed egress destinations", member)
+		}
+		result = append(result, destinations...)
+	}
 	return result, nil
 }
 

@@ -405,6 +405,8 @@ if [[ -n "$paw_binary" ]]; then
       destinations="$codex_destinations"
     elif [[ "$provider" == claude-code ]]; then
       destinations="$claude_code_destinations"
+    elif [[ "$provider" == all ]]; then
+      destinations="$codex_destinations$claude_code_destinations"
     fi
     "$paw_binary" workspace render \
       --adapter minikube \
@@ -477,5 +479,8 @@ platform-readonly none paw-platform-readonly
 platform-readonly codex paw-platform-readonly-codex
 platform-readonly claude-code paw-platform-readonly-claude-code
 platform-readonly opencode paw-platform-readonly-opencode
+core all paw-all
+developer all paw-developer-all
+platform-readonly all paw-platform-readonly-all
 EOF
 fi

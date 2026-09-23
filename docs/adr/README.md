@@ -17,6 +17,7 @@
 | [ADR-013](ADR-013-per-workspace-bounded-egress-proxy.md) | Per-workspace bounded egress proxy | Accepted |
 | [ADR-014](ADR-014-pod-scoped-provider-login-state.md) | Pod-scoped provider login state | Accepted |
 | [ADR-015](ADR-015-developer-profile.md) | Developer profile for PAW self-development | Accepted |
+| [ADR-016](ADR-016-all-providers-composition.md) | All-providers image composition | Accepted |
 
 ## Statuses
 

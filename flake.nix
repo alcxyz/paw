@@ -243,6 +243,54 @@
             t3codeHeadless = t3code-headless;
             runtimePackages = (profileEvaluations system).platform-readonly.runtimePackages;
           };
+          paw-all-image = pkgs.callPackage ./nix/images/paw-core.nix {
+            imageName = "paw-all";
+            profileName = "core";
+            providerPackages = [
+              codex-runtime
+              pkgs.claude-code
+              pkgs.opencode
+            ];
+            providers = [
+              "codex"
+              "claude-code"
+              "opencode"
+            ];
+            t3codeHeadless = t3code-headless;
+            runtimePackages = (profileEvaluations system).core.runtimePackages;
+          };
+          paw-developer-all-image = pkgs.callPackage ./nix/images/paw-core.nix {
+            imageName = "paw-developer-all";
+            profileName = "developer";
+            providerPackages = [
+              codex-runtime
+              pkgs.claude-code
+              pkgs.opencode
+            ];
+            providers = [
+              "codex"
+              "claude-code"
+              "opencode"
+            ];
+            t3codeHeadless = t3code-headless;
+            runtimePackages = (profileEvaluations system).developer.runtimePackages;
+          };
+          paw-platform-readonly-all-image = pkgs.callPackage ./nix/images/paw-core.nix {
+            imageName = "paw-platform-readonly-all";
+            profileName = "platform-readonly";
+            providerPackages = [
+              codex-runtime
+              pkgs.claude-code
+              pkgs.opencode
+            ];
+            providers = [
+              "codex"
+              "claude-code"
+              "opencode"
+            ];
+            t3codeHeadless = t3code-headless;
+            runtimePackages = (profileEvaluations system).platform-readonly.runtimePackages;
+          };
           paw-core-closure-info = pkgs.closureInfo {
             rootPaths = paw-core-image.runtimeContents;
           };
@@ -266,6 +314,15 @@
           };
           paw-developer-opencode-closure-info = pkgs.closureInfo {
             rootPaths = paw-developer-opencode-image.runtimeContents;
+          };
+          paw-all-closure-info = pkgs.closureInfo {
+            rootPaths = paw-all-image.runtimeContents;
+          };
+          paw-developer-all-closure-info = pkgs.closureInfo {
+            rootPaths = paw-developer-all-image.runtimeContents;
+          };
+          paw-platform-readonly-all-closure-info = pkgs.closureInfo {
+            rootPaths = paw-platform-readonly-all-image.runtimeContents;
           };
           paw-platform-readonly-closure-info = pkgs.closureInfo {
             rootPaths = paw-platform-readonly-image.runtimeContents;
@@ -327,6 +384,24 @@
             reportScript = ./scripts/report-image.py;
             runtimeContents = paw-developer-opencode-image.runtimeContents;
           };
+          paw-all-image-report = pkgs.callPackage ./nix/images/report.nix {
+            image = paw-all-image;
+            name = paw-all-image.imageName;
+            reportScript = ./scripts/report-image.py;
+            runtimeContents = paw-all-image.runtimeContents;
+          };
+          paw-developer-all-image-report = pkgs.callPackage ./nix/images/report.nix {
+            image = paw-developer-all-image;
+            name = paw-developer-all-image.imageName;
+            reportScript = ./scripts/report-image.py;
+            runtimeContents = paw-developer-all-image.runtimeContents;
+          };
+          paw-platform-readonly-all-image-report = pkgs.callPackage ./nix/images/report.nix {
+            image = paw-platform-readonly-all-image;
+            name = paw-platform-readonly-all-image.imageName;
+            reportScript = ./scripts/report-image.py;
+            runtimeContents = paw-platform-readonly-all-image.runtimeContents;
+          };
           paw-platform-readonly-image-report = pkgs.callPackage ./nix/images/report.nix {
             image = paw-platform-readonly-image;
             name = paw-platform-readonly-image.imageName;
@@ -378,6 +453,15 @@
             paw-opencode-closure-info
             paw-opencode-image
             paw-opencode-image-report
+            paw-all-closure-info
+            paw-all-image
+            paw-all-image-report
+            paw-developer-all-closure-info
+            paw-developer-all-image
+            paw-developer-all-image-report
+            paw-platform-readonly-all-closure-info
+            paw-platform-readonly-all-image
+            paw-platform-readonly-all-image-report
             paw-developer-claude-code-closure-info
             paw-developer-claude-code-image
             paw-developer-claude-code-image-report
@@ -447,6 +531,14 @@
             self.packages.${system}.paw-developer-claude-code-image-report;
           paw-developer-opencode-closure-info = self.packages.${system}.paw-developer-opencode-closure-info;
           paw-developer-opencode-image-report = self.packages.${system}.paw-developer-opencode-image-report;
+          paw-all-closure-info = self.packages.${system}.paw-all-closure-info;
+          paw-all-image-report = self.packages.${system}.paw-all-image-report;
+          paw-developer-all-closure-info = self.packages.${system}.paw-developer-all-closure-info;
+          paw-developer-all-image-report = self.packages.${system}.paw-developer-all-image-report;
+          paw-platform-readonly-all-closure-info =
+            self.packages.${system}.paw-platform-readonly-all-closure-info;
+          paw-platform-readonly-all-image-report =
+            self.packages.${system}.paw-platform-readonly-all-image-report;
           paw-platform-readonly-closure-info = self.packages.${system}.paw-platform-readonly-closure-info;
           paw-platform-readonly-image-report = self.packages.${system}.paw-platform-readonly-image-report;
           paw-platform-readonly-codex-closure-info =
@@ -834,6 +926,7 @@
                   case "$provider" in
                     codex) extra_environment='["CODEX_HOME=/workspace/session/codex"]' ;;
                     claude-code) extra_environment='["CLAUDE_CONFIG_DIR=/workspace/session/claude","CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]' ;;
+                    all) extra_environment='["CODEX_HOME=/workspace/session/codex","CLAUDE_CONFIG_DIR=/workspace/session/claude","CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]' ;;
                   esac
                   jq --exit-status \
                     --arg name "$name" \
@@ -845,7 +938,8 @@
                       .image.runtime.user == "65532:65532" and
                       .image.runtime.workingDirectory == "/workspace/work" and
                       .image.runtime.labels["paw.alc.xyz/profile"] == "core" and
-                      .image.runtime.labels["paw.alc.xyz/providers"] == $provider and
+                      .image.runtime.labels["paw.alc.xyz/providers"] ==
+                        (if $provider == "all" then "codex,claude-code,opencode" else $provider end) and
                       (.image.runtime.labels["paw.alc.xyz/provider-packages"] | length) > 0 and
                       (.image.runtime.environment | map(split("=")[0]) | sort) ==
                         ((["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME",
@@ -862,11 +956,20 @@
                     exit 1
                   fi
 
+                  if [ "$provider" = all ]; then
+                    for member_pattern in '-codex-' '-claude-code-' '-opencode-'; do
+                      if ! grep -Eq -- "$member_pattern" "$closure_info/store-paths"; then
+                        echo "$name lacks $member_pattern" >&2
+                        exit 1
+                      fi
+                    done
+                  fi
                   forbidden='-(electron|t3code-desktop|pnpm|python3|nix)-|-nodejs-[0-9]'
                   case "$provider" in
                     codex) forbidden="$forbidden|-claude-code-|-opencode-" ;;
                     claude-code) forbidden="$forbidden|-codex-|-opencode-" ;;
                     opencode) forbidden="$forbidden|-claude-code-|-codex-" ;;
+                    all) ;;
                   esac
                   if grep -Eiq -- "$forbidden" "$closure_info/store-paths"; then
                     echo "$name contains a desktop, another provider, build, or Nix runtime" >&2
@@ -913,6 +1016,13 @@
                   $((775 * 1024 * 1024)) \
                   $((840 * 1024 * 1024)) \
                   $((255 * 1024 * 1024))
+                check_image \
+                  paw-all all '-codex-' \
+                  ${paw-all-image-report}/report.json \
+                  ${paw-all-closure-info} \
+                  $((1465 * 1024 * 1024)) \
+                  $((1535 * 1024 * 1024)) \
+                  $((500 * 1024 * 1024))
               '';
 
           platform-readonly-image-contract =
@@ -1144,6 +1254,7 @@
                   case "$provider" in
                     codex) extra_environment='["CGO_ENABLED=0","GOTOOLCHAIN=local","CODEX_HOME=/workspace/session/codex"]' ;;
                     claude-code) extra_environment='["CGO_ENABLED=0","GOTOOLCHAIN=local","CLAUDE_CONFIG_DIR=/workspace/session/claude","CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]' ;;
+                    all) extra_environment='["CGO_ENABLED=0","GOTOOLCHAIN=local","CODEX_HOME=/workspace/session/codex","CLAUDE_CONFIG_DIR=/workspace/session/claude","CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]' ;;
                   esac
                   jq --exit-status \
                     --arg name "$name" \
@@ -1155,7 +1266,8 @@
                       .image.runtime.user == "65532:65532" and
                       .image.runtime.workingDirectory == "/workspace/work" and
                       .image.runtime.labels["paw.alc.xyz/profile"] == "developer" and
-                      .image.runtime.labels["paw.alc.xyz/providers"] == $provider and
+                      .image.runtime.labels["paw.alc.xyz/providers"] ==
+                        (if $provider == "all" then "codex,claude-code,opencode" else $provider end) and
                       (.image.runtime.labels["paw.alc.xyz/provider-packages"] | length) > 0 and
                       (.image.runtime.environment | map(split("=")[0]) | sort) ==
                         ((["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME",
@@ -1174,11 +1286,20 @@
                     fi
                   done
 
+                  if [ "$provider" = all ]; then
+                    for member_pattern in '-codex-' '-claude-code-' '-opencode-'; do
+                      if ! grep -Eq -- "$member_pattern" "$closure_info/store-paths"; then
+                        echo "$name lacks $member_pattern" >&2
+                        exit 1
+                      fi
+                    done
+                  fi
                   forbidden='-(electron|t3code-desktop|pnpm|python3|nix|kubectl|opentofu)-|-nodejs-[0-9]|-gcc-[0-9.]+$'
                   case "$provider" in
                     codex) forbidden="$forbidden|-claude-code-|-opencode-" ;;
                     claude-code) forbidden="$forbidden|-codex-|-opencode-" ;;
                     opencode) forbidden="$forbidden|-claude-code-|-codex-" ;;
+                    all) ;;
                   esac
                   if grep -Eiq -- "$forbidden" "$closure_info/store-paths"; then
                     echo "$name contains another provider, C toolchain, cluster tool, desktop, build, or Nix runtime" >&2
@@ -1221,6 +1342,13 @@
                   $((1020 * 1024 * 1024)) \
                   $((1120 * 1024 * 1024)) \
                   $((325 * 1024 * 1024))
+                check_image \
+                  paw-developer-all all '-codex-' \
+                  ${paw-developer-all-image-report}/report.json \
+                  ${paw-developer-all-closure-info} \
+                  $((1725 * 1024 * 1024)) \
+                  $((1825 * 1024 * 1024)) \
+                  $((580 * 1024 * 1024))
               '';
 
           platform-provider-image-contract =
@@ -1265,6 +1393,7 @@
                   case "$provider" in
                     codex) extra_environment='["CODEX_HOME=/workspace/session/codex"]' ;;
                     claude-code) extra_environment='["CLAUDE_CONFIG_DIR=/workspace/session/claude","CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]' ;;
+                    all) extra_environment='["CODEX_HOME=/workspace/session/codex","CLAUDE_CONFIG_DIR=/workspace/session/claude","CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]' ;;
                   esac
                   jq --exit-status \
                     --arg name "$name" \
@@ -1277,7 +1406,8 @@
                       .image.runtime.workingDirectory == "/workspace/work" and
                       .image.runtime.labels["paw.alc.xyz/profile"] ==
                         "platform-readonly" and
-                      .image.runtime.labels["paw.alc.xyz/providers"] == $provider and
+                      .image.runtime.labels["paw.alc.xyz/providers"] ==
+                        (if $provider == "all" then "codex,claude-code,opencode" else $provider end) and
                       (.image.runtime.labels["paw.alc.xyz/provider-packages"] | length) > 0 and
                       (.image.runtime.environment | map(split("=")[0]) | sort) ==
                         ((["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME",
@@ -1303,11 +1433,20 @@
                     fi
                   done
 
+                  if [ "$provider" = all ]; then
+                    for member_pattern in '-codex-' '-claude-code-' '-opencode-'; do
+                      if ! grep -Eq -- "$member_pattern" "$closure_info/store-paths"; then
+                        echo "$name lacks $member_pattern" >&2
+                        exit 1
+                      fi
+                    done
+                  fi
                   forbidden='-(electron|t3code-desktop|pnpm|python3|nix|azure-cli|awscli2|google-cloud-sdk)-|-nodejs-[0-9]'
                   case "$provider" in
                     codex) forbidden="$forbidden|-claude-code-|-opencode-" ;;
                     claude-code) forbidden="$forbidden|-codex-|-opencode-" ;;
                     opencode) forbidden="$forbidden|-claude-code-|-codex-" ;;
+                    all) ;;
                   esac
                   if grep -Eiq -- "$forbidden" "$closure_info/store-paths"; then
                     echo "$name contains another provider, cloud-specific, build, desktop, or Nix runtime" >&2
@@ -1350,6 +1489,13 @@
                   $((1085 * 1024 * 1024)) \
                   $((1150 * 1024 * 1024)) \
                   $((360 * 1024 * 1024))
+                check_image \
+                  paw-platform-readonly-all all '-codex-' \
+                  ${paw-platform-readonly-all-image-report}/report.json \
+                  ${paw-platform-readonly-all-closure-info} \
+                  $((1760 * 1024 * 1024)) \
+                  $((1830 * 1024 * 1024)) \
+                  $((600 * 1024 * 1024))
               '';
         }
       );

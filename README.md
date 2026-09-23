@@ -446,12 +446,15 @@ layers. Installing an executable does not grant mutation authority: the
 `read-only` ceiling, scoped identity, RBAC, egress policy, and supervised
 permissions remain independent enforcement boundaries.
 
-Useful released workspaces compose that capability with exactly one provider:
+Useful released workspaces compose that capability with one provider, or with
+`all` of them when one T3 should offer Codex, Claude Code, and OpenCode side by
+side ([ADR-016](docs/adr/ADR-016-all-providers-composition.md)):
 
 ```sh
 nix build .#paw-platform-readonly-codex-image
 nix build .#paw-platform-readonly-claude-code-image
 nix build .#paw-platform-readonly-opencode-image
+nix build .#paw-platform-readonly-all-image
 ```
 
 The `developer` profile is `core` plus Go, shellcheck, jq, and yq, measured and
@@ -462,6 +465,7 @@ nix build .#paw-developer-image
 nix build .#paw-developer-codex-image
 nix build .#paw-developer-claude-code-image
 nix build .#paw-developer-opencode-image
+nix build .#paw-developer-all-image
 ```
 
 These are complete OCI images, not runtime installers. They preserve the exact
