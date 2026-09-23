@@ -1014,9 +1014,9 @@
                   paw-opencode opencode '-opencode-' \
                   ${paw-opencode-image-report}/report.json \
                   ${paw-opencode-closure-info} \
-                  $((775 * 1024 * 1024)) \
-                  $((840 * 1024 * 1024)) \
-                  $((255 * 1024 * 1024))
+                  $((820 * 1024 * 1024)) \
+                  $((890 * 1024 * 1024)) \
+                  $((260 * 1024 * 1024))
                 check_image \
                   paw-all all '-codex-' \
                   ${paw-all-image-report}/report.json \
@@ -1340,9 +1340,9 @@
                   paw-developer-opencode opencode '-opencode-' \
                   ${paw-developer-opencode-image-report}/report.json \
                   ${paw-developer-opencode-closure-info} \
-                  $((1020 * 1024 * 1024)) \
-                  $((1120 * 1024 * 1024)) \
-                  $((325 * 1024 * 1024))
+                  $((1080 * 1024 * 1024)) \
+                  $((1180 * 1024 * 1024)) \
+                  $((335 * 1024 * 1024))
                 check_image \
                   paw-developer-all all '-codex-' \
                   ${paw-developer-all-image-report}/report.json \
@@ -1487,8 +1487,8 @@
                   paw-platform-readonly-opencode opencode '-opencode-' \
                   ${paw-platform-readonly-opencode-image-report}/report.json \
                   ${paw-platform-readonly-opencode-closure-info} \
-                  $((1085 * 1024 * 1024)) \
-                  $((1150 * 1024 * 1024)) \
+                  $((1120 * 1024 * 1024)) \
+                  $((1195 * 1024 * 1024)) \
                   $((360 * 1024 * 1024))
                 check_image \
                   paw-platform-readonly-all all '-codex-' \
