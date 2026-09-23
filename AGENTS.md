@@ -29,7 +29,9 @@ clearly distinguishable from accepted ones.
 ## Git
 
 - GitHub (`alcxyz/paw`) is canonical for code, issues, PRs, CI, and releases.
-  Forgejo is a private secondary copy and historical tracker, not a merge gate.
+  Forgejo (`alcxyz/paw`) is a public read-only pull mirror of GitHub, refreshed
+  every eight hours; do not push to it or open PRs there. Pre-mirror Forgejo-only
+  branches are retained in `alcxyz/paw-continuity-archive-20260923`.
 - Use `dev` for normal development and promote to protected `main` through a
   GitHub pull request.
 - Do not create or publish an external repository without confirming its host,
