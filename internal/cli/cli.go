@@ -32,6 +32,8 @@ type repositoryExporter func(context.Context, repository.ExportRequest) error
 type environmentVerifier func(context.Context, environment.Request) (environment.Report, error)
 
 type dependencies struct {
+	getenv         func(string) string
+	configDir      func() (string, error)
 	lookPath       pathLookup
 	runCommand     commandRunner
 	runInput       inputCommandRunner
@@ -48,7 +50,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
-	return runWithDependencies(args, stdout, stderr, dependencies{
+	log := openInvocationLog(os.Getenv)
+	deps := log.withLogging(dependencies{
+		getenv:         os.Getenv,
+		configDir:      os.UserConfigDir,
 		lookPath:       lookPath,
 		runCommand:     executeCommand,
 		runInput:       executeCommandWithInput,
@@ -58,6 +63,9 @@ func run(args []string, stdout, stderr io.Writer, lookPath pathLookup) int {
 		exportRepo:     repository.Export,
 		verifyEnv:      environment.Verify,
 	})
+	exitCode := runWithDependencies(args, stdout, stderr, deps)
+	log.close(args, exitCode)
+	return exitCode
 }
 
 func runWithDependencies(args []string, stdout, stderr io.Writer, deps dependencies) int {
@@ -93,9 +101,13 @@ func runWithDependencies(args []string, stdout, stderr io.Writer, deps dependenc
 			return printProfile(args[2], true, stdout, stderr)
 		}
 		return usageError(stderr, "usage: paw profile list | paw profile show NAME [--json]")
-	case "environment":
+	case "config":
+		return runConfig(args[1:], stdout, stderr, deps)
+	case "logs":
+		return runLogs(args[1:], stdout, stderr, deps)
+	case "environment", "env":
 		return runEnvironment(args[1:], stdout, stderr, deps)
-	case "workspace":
+	case "workspace", "ws":
 		return runWorkspace(args[1:], stdout, stderr, deps)
 	default:
 		return usageError(stderr, fmt.Sprintf("unknown command %q", args[0]))
@@ -109,12 +121,18 @@ Usage:
   paw <command>
 
 Commands:
+  config        Set default --adapter and --context values
   doctor        Inspect local PAW dependencies
-  environment   Verify a selected runtime environment
+  environment   Verify a selected runtime environment (alias: env)
+  logs          Locate or tail the invocation log
   profile       List or inspect built-in workspace profiles
-  workspace     Render and operate a workspace
+  workspace     Render and operate a workspace (alias: ws; repository: repo)
   version       Print build version information
-  help          Show this help`)
+  help          Show this help
+
+--adapter and --context may be omitted once defaults are set with
+"paw config set" or the PAW_ADAPTER and PAW_CONTEXT variables. Config lives
+in $XDG_CONFIG_HOME/paw, the invocation log in $XDG_STATE_HOME/paw.`)
 }
 
 func runEnvironment(args []string, stdout, stderr io.Writer, deps dependencies) int {
@@ -143,6 +161,9 @@ func runEnvironment(args []string, stdout, stderr io.Writer, deps dependencies) 
 		default:
 			return usageError(stderr, fmt.Sprintf("unknown environment option %q", args[index]))
 		}
+	}
+	if !applyDefaultContext(&contextName, deps, stderr) {
+		return 1
 	}
 	if contextName == "" {
 		return usageError(stderr, "environment verify requires --context")
@@ -195,7 +216,7 @@ type workspaceOptions struct {
 }
 
 func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) int {
-	if len(args) > 0 && args[0] == "repository" {
+	if len(args) > 0 && (args[0] == "repository" || args[0] == "repo") {
 		return runWorkspaceRepository(args[1:], stdout, stderr, deps)
 	}
 	if len(args) == 0 || !slices.Contains(
@@ -208,6 +229,9 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	options, err := parseWorkspaceOptions(args[1:])
 	if err != nil {
 		return usageError(stderr, err.Error())
+	}
+	if !applyUserDefaults(&options.adapter, &options.context, operation != "render", deps, stderr) {
+		return 1
 	}
 	if options.adapter == "" {
 		return usageError(stderr, "workspace requires --adapter kubernetes or minikube")
@@ -381,6 +405,8 @@ func runWorkspaceRepository(args []string, stdout, stderr io.Writer, deps depend
 		return runWorkspaceRepositoryExport(args[1:], stdout, stderr, deps)
 	case "remote":
 		return runWorkspaceRepositoryRemote(args[1:], stdout, stderr, deps)
+	case "link":
+		return runWorkspaceRepositoryLink(args[1:], stdout, stderr, deps)
 	default:
 		return usageError(stderr, workspaceRepositoryUsage())
 	}
@@ -415,6 +441,9 @@ func runWorkspaceRepositoryAdd(args []string, stdout, stderr io.Writer, deps dep
 		*target = args[index]
 	}
 
+	if !applyUserDefaults(&adapter, &context, true, deps, stderr) {
+		return 1
+	}
 	if adapter == "" || context == "" || name == "" || revision == "" || source == "" {
 		return usageError(stderr, workspaceRepositoryUsage())
 	}
@@ -463,6 +492,9 @@ func runWorkspaceRepositoryExport(args []string, stdout, stderr io.Writer, deps 
 		*target = args[index]
 	}
 
+	if !applyUserDefaults(&adapter, &contextName, true, deps, stderr) {
+		return 1
+	}
 	if adapter == "" || baseCommit == "" || contextName == "" || name == "" || output == "" {
 		return usageError(stderr, workspaceRepositoryUsage())
 	}
@@ -746,6 +778,7 @@ func workspaceUsage() string {
   paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME
   paw workspace repository export --adapter ADAPTER --context CONTEXT --name NAME --base-commit FULL_SHA --output ABSOLUTE_NEW_PATCH
   paw workspace repository remote --adapter ADAPTER --context CONTEXT --name NAME --service git-upload-pack|git-receive-pack
+  paw workspace repository link --adapter ADAPTER --context CONTEXT --name NAME [--remote paw] [--command paw]
   paw workspace destroy --adapter ADAPTER --context CONTEXT --delete-state
 
 ADAPTER is kubernetes or minikube. The kubernetes adapter requires immutable
@@ -758,13 +791,15 @@ func workspaceRepositoryUsage() string {
   paw workspace repository add --adapter ADAPTER --context CONTEXT --source PATH --revision REF --name NAME
   paw workspace repository export --adapter ADAPTER --context CONTEXT --name NAME --base-commit FULL_SHA --output ABSOLUTE_NEW_PATCH
   paw workspace repository remote --adapter ADAPTER --context CONTEXT --name NAME --service git-upload-pack|git-receive-pack
+  paw workspace repository link --adapter ADAPTER --context CONTEXT --name NAME [--remote paw] [--command paw]
 
-"remote" is a Git ext:: transport for the host: it speaks the Git protocol on
-stdin and stdout and tunnels it into the workspace repository over kubectl
-exec, so the workspace needs no remote, credential, or network. Git disables
-ext transports by default; enable them once for your user, then add the remote:
-  git config --global protocol.ext.allow user
-  git remote add paw "ext::paw workspace repository remote --adapter ADAPTER --context CONTEXT --name NAME --service %S"`
+"link" adds the workspace repository as a Git remote of the current checkout
+(default name "paw"), so plain git fetch and git push reach it. "remote" is the
+Git ext:: transport behind that remote: it speaks the Git protocol on stdin and
+stdout and tunnels it into the workspace over kubectl exec, so the workspace
+needs no remote, credential, or network. Git disables ext transports by
+default; allow them once for your user before linking:
+  git config --global protocol.ext.allow user`
 }
 
 // interactiveRunner attaches the operator's terminal to a command, for
