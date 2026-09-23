@@ -29,11 +29,11 @@ These are gates, not claims that the integrations already exist:
   Do not repair, replace, or repurpose an unrelated existing cluster implicitly.
 - [ ] Pass current v2 baseline network verification and cleanup. Retain a known
   non-enforcing negative control for the security test, not a new support matrix.
-- [ ] Enable provider authentication at runtime through a reviewed mechanism.
-  Do not copy a host credential directory or mount SOPS identities. The
-  reviewed mechanism is the pod-scoped login of
-  [ADR-014](adr/ADR-014-pod-scoped-provider-login-state.md); the gate closes
-  when the first pilot login completes through it.
+- [x] Enable provider authentication at runtime through a reviewed mechanism.
+  Do not copy a host credential directory or mount SOPS identities. Done
+  through the pod-scoped login of
+  [ADR-014](adr/ADR-014-pod-scoped-provider-login-state.md); see the
+  first-login evidence below.
 - [ ] Prove approved provider access and denied unapproved access while retaining
   default-deny networking. Baseline pod-network checks do not prove this.
 - [ ] Establish authenticated access from both devices. The current CLI tunnel
@@ -92,6 +92,18 @@ name resolution failed because the workspace has no DNS egress. The proxy log
 recorded only hostnames and outcomes. This proves the boundary for the Codex
 destination list; it does not establish provider authentication readiness,
 which still needs the credential storage decision.
+
+### First provider login (2026-09-23)
+
+The first pilot login completed through the ADR-014 mechanism on the
+`paw-smoke` Minikube profile. A `developer` profile workspace with the Codex
+image ran `codex login --device-auth` inside the pod; the operator opened the
+device link and entered the one-time code in a browser on another machine.
+Codex then reported a ChatGPT login, the credential file existed only on the
+in-memory session volume, no credential file existed under the state claim,
+and the egress proxy log showed only `auth.openai.com` under
+`approved-provider-api`. This closes the credential-storage gate. Cross-device
+browser access, revocation effect, and the AI task itself remain open.
 
 ## Task acceptance
 
