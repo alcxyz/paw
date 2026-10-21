@@ -57,6 +57,7 @@ const (
 // Request selects the Kubernetes context to verify.
 type Request struct {
 	Context string
+	Egress  *EgressRequest
 }
 
 // Check records one credential-free behavioral outcome.
@@ -68,15 +69,18 @@ type Check struct {
 
 // Report is the minimal evidence produced by an environment verification.
 type Report struct {
-	SchemaVersion     string    `json:"schemaVersion"`
-	ContractVersion   string    `json:"contractVersion"`
-	ProbeVersion      string    `json:"probeVersion"`
-	Context           string    `json:"context"`
-	KubernetesVersion string    `json:"kubernetesVersion,omitempty"`
-	StartedAt         time.Time `json:"startedAt"`
-	CompletedAt       time.Time `json:"completedAt"`
-	Outcome           Outcome   `json:"outcome"`
-	Checks            []Check   `json:"checks"`
+	SchemaVersion        string         `json:"schemaVersion"`
+	EgressProbe          *EgressRequest `json:"egressProbe,omitempty"`
+	EgressQualification  string         `json:"egressQualification"`
+	ProviderAvailability string         `json:"providerAvailability"`
+	ContractVersion      string         `json:"contractVersion"`
+	ProbeVersion         string         `json:"probeVersion"`
+	Context              string         `json:"context"`
+	KubernetesVersion    string         `json:"kubernetesVersion,omitempty"`
+	StartedAt            time.Time      `json:"startedAt"`
+	CompletedAt          time.Time      `json:"completedAt"`
+	Outcome              Outcome        `json:"outcome"`
+	Checks               []Check        `json:"checks"`
 }
 
 // Verify runs the network-policy conformance probe against one explicit
@@ -120,6 +124,9 @@ func WriteText(output io.Writer, report Report) error {
 		return err
 	}
 	if _, err := fmt.Fprintf(w, "COMPLETED\t%s\n", report.CompletedAt.Format(time.RFC3339)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "EGRESS QUALIFICATION\t%s\nPROVIDER AVAILABILITY\t%s\n", report.EgressQualification, report.ProviderAvailability); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(w, "\nCHECK\tSTATUS\tDETAIL"); err != nil {
@@ -174,19 +181,28 @@ type verifier struct {
 func (v verifier) verify(ctx context.Context, request Request) (Report, error) {
 	started := v.now()
 	report := Report{
-		SchemaVersion:   SchemaVersion,
-		ContractVersion: ContractVersion,
-		ProbeVersion:    ProbeVersion,
-		Context:         request.Context,
-		StartedAt:       started,
-		Outcome:         OutcomeError,
-		Checks:          []Check{},
+		SchemaVersion:        SchemaVersion,
+		EgressQualification:  "unproven",
+		ProviderAvailability: "unavailable",
+		ContractVersion:      ContractVersion,
+		ProbeVersion:         ProbeVersion,
+		Context:              request.Context,
+		StartedAt:            started,
+		Outcome:              OutcomeError,
+		Checks:               []Check{},
 	}
 
 	if request.Context == "" {
 		report.CompletedAt = v.now()
 		return report, errors.New("context must not be empty")
 	}
+	if request.Egress != nil {
+		if err := validateEgressRequest(*request.Egress); err != nil {
+			report.CompletedAt = v.now()
+			return report, err
+		}
+	}
+
 	namespace, err := v.newNamespace()
 	if err != nil {
 		report.CompletedAt = v.now()
@@ -200,6 +216,20 @@ func (v verifier) verify(ctx context.Context, request Request) (Report, error) {
 	}
 	owned := namespaceOwnership{token: ownerToken}
 	runErr := v.run(ctx, request.Context, namespace, &owned, &report)
+	if runErr == nil && (report.Outcome == OutcomePass || report.Outcome == OutcomeFail) {
+		baselineFailed := report.Outcome == OutcomeFail
+		runErr = v.qualifyEgress(ctx, request, &report)
+		if runErr != nil {
+			report.Outcome = OutcomeError
+		} else if baselineFailed {
+			// Keep the baseline failure while collecting the requested negative-lane
+			// transport diagnostics from the separately prepared workspace.
+			report.Outcome = OutcomeFail
+			if request.Egress != nil {
+				report.EgressQualification = "fail"
+			}
+		}
+	}
 	cleanupErr := v.cleanup(request.Context, namespace, owned, &report)
 	report.CompletedAt = v.now()
 

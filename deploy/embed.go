@@ -167,6 +167,9 @@ func MaterializeManifest(request ManifestRequest) (string, func(), error) {
 	if err != nil {
 		return "", func() {}, err
 	}
+	if err := ValidateProviderActivation(selection.Provider); err != nil {
+		return "", func() {}, err
+	}
 	destinations, err := EgressDestinations(selection)
 	if err != nil {
 		return "", func() {}, err

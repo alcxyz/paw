@@ -70,8 +70,15 @@ func runWorkspaceRepositoryRemote(args []string, stdout, stderr io.Writer, deps 
 		"--context", contextName,
 		"--namespace", workspaceNamespace,
 		"exec", "--stdin", "--quiet", "workspace-0", "--container", "t3", "--",
-		service, "/workspace/work/" + name,
 	}
+	if service == "git-receive-pack" {
+		// Repository-local configuration is writable in the workspace. Bind the
+		// checked-out-branch rule to this invocation instead of its defaults.
+		kubectlArgs = append(kubectlArgs, "git", "-c", "core.bare=false", "-c", "receive.denyCurrentBranch=refuse", "receive-pack")
+	} else {
+		kubectlArgs = append(kubectlArgs, service)
+	}
+	kubectlArgs = append(kubectlArgs, "/workspace/work/"+name)
 	// Git owns both ends of the stream; PAW must not write anything else to
 	// stdout. Diagnostics from kubectl or the service go to stderr only.
 	if err := deps.runInput(context.Background(), "kubectl", kubectlArgs, os.Stdin, stdout, stderr); err != nil {

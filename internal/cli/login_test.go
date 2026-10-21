@@ -30,26 +30,18 @@ func sessionTestDependencies(t *testing.T, recordedProvider string, interactive 
 	return deps
 }
 
-func TestWorkspaceLoginRunsProviderLoginInsidePod(t *testing.T) {
-	var interactive [][]string
-	var stdout, stderr bytes.Buffer
-	exitCode := runWithDependencies(
-		[]string{"workspace", "login", "--adapter", "minikube", "--context", "paw-local", "--provider", "codex"},
-		&stdout, &stderr, sessionTestDependencies(t, "codex", &interactive),
-	)
-	if exitCode != 0 {
-		t.Fatalf("login failed: exit=%d stderr=%q", exitCode, stderr.String())
-	}
-	expected := []string{
-		"--context", "paw-local", "--namespace", "paw-workspace",
-		"exec", "--stdin", "--tty", "workspace-0", "--container", "t3", "--",
-		"codex", "login", "--device-auth",
-	}
-	if len(interactive) != 1 || !slices.Equal(interactive[0], expected) {
-		t.Fatalf("unexpected interactive commands: %v", interactive)
-	}
-	if !strings.Contains(stdout.String(), "session volume") {
-		t.Fatalf("unexpected stdout: %q", stdout.String())
+func TestWorkspaceLoginRefusesUnavailableProvider(t *testing.T) {
+	for _, provider := range []string{"codex", "claude-code"} {
+		var stderr bytes.Buffer
+		deps := workspaceTestDependencies(func(string, []string, io.Writer, io.Writer) error {
+			t.Fatal("unavailable login must not contact Kubernetes")
+			return nil
+		})
+		deps.runInteractive = func(string, []string) error { t.Fatal("login must not run"); return nil }
+		exit := runWithDependencies([]string{"workspace", "login", "--adapter", "minikube", "--context", "fixture", "--provider", provider}, &bytes.Buffer{}, &stderr, deps)
+		if exit != 1 || !strings.Contains(stderr.String(), "application-destination") {
+			t.Fatalf("exit=%d: %s", exit, &stderr)
+		}
 	}
 }
 
@@ -67,11 +59,11 @@ func TestWorkspaceLogoutRunsProviderLogoutInsidePod(t *testing.T) {
 	}
 }
 
-func TestWorkspaceLoginRefusesMismatchedProvider(t *testing.T) {
+func TestWorkspaceLogoutRefusesMismatchedProvider(t *testing.T) {
 	var interactive [][]string
 	var stderr bytes.Buffer
 	exitCode := runWithDependencies(
-		[]string{"workspace", "login", "--adapter", "minikube", "--context", "paw-local", "--provider", "codex"},
+		[]string{"workspace", "logout", "--adapter", "minikube", "--context", "paw-local", "--provider", "codex"},
 		&bytes.Buffer{}, &stderr, sessionTestDependencies(t, "claude-code", &interactive),
 	)
 	if exitCode != 1 || len(interactive) != 0 || !strings.Contains(stderr.String(), `records provider "claude-code"`) {

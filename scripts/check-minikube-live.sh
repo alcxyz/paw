@@ -75,7 +75,13 @@ egress_probe_name="${PAW_EGRESS_PROBE_NAME:-one.one.one.one}"
 [[ -x "$paw_binary" ]] || fail "PAW_BINARY must be an executable file"
 [[ "$local_port" =~ ^[0-9]+$ ]] || fail "LOCAL_PORT must be numeric"
 ((local_port >= 1024 && local_port <= 65535)) || fail "LOCAL_PORT must be between 1024 and 65535"
-[[ "$egress_probe_host" =~ ^[A-Za-z0-9.-]+$ ]] || fail "PAW_EGRESS_PROBE_HOST contains unsupported characters"
+[[ "$egress_probe_host" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] ||
+  fail "PAW_EGRESS_PROBE_HOST must be an IPv4 literal for the direct TCP control"
+IFS=. read -r -a egress_probe_octets <<< "$egress_probe_host"
+for octet in "${egress_probe_octets[@]}"; do
+  [[ "$octet" == 0 || "$octet" != 0* ]] || fail "PAW_EGRESS_PROBE_HOST must use IPv4 octets without leading zeros"
+  ((10#$octet <= 255)) || fail "PAW_EGRESS_PROBE_HOST must be an IPv4 literal for the direct TCP control"
+done
 [[ "$egress_probe_port" =~ ^[0-9]+$ ]] || fail "PAW_EGRESS_PROBE_PORT must be numeric"
 [[ "$egress_probe_name" =~ ^[a-z0-9.-]+$ ]] || fail "PAW_EGRESS_PROBE_NAME must be a lowercase hostname"
 ((egress_probe_port >= 1 && egress_probe_port <= 65535)) || fail "PAW_EGRESS_PROBE_PORT must be between 1 and 65535"
@@ -212,41 +218,6 @@ secret_objects="$(
 )"
 [[ -z "$secret_objects" ]] || fail "workspace namespace contains Secret objects"
 
-probe_egress() {
-  local pod=$1
-  local result
-
-  # $1 and $2 in the command belong to the remote shell.
-  # shellcheck disable=SC2016
-  result="$(kubectl --context "$context" --namespace "$namespace" exec "$pod" -- \
-    bash -ceu '
-      command -v timeout >/dev/null
-      command -v bash >/dev/null
-      if timeout 5 bash -c "</dev/tcp/$1/$2" 2>/dev/null; then
-        printf connected
-      else
-        result=$?
-        test "$result" = 124 || exit "$result"
-        printf timed-out
-      fi
-    ' paw-egress-probe "$egress_probe_host" "$egress_probe_port" \
-    2>/dev/null)" || return 1
-  [[ "$result" == connected || "$result" == timed-out ]] || return 1
-  printf '%s' "$result"
-}
-
-positive_result="$(probe_egress egress-positive-control)" || fail "positive-control probe could not execute"
-if [[ "$positive_result" != connected ]]; then
-  fail "positive-control pod cannot reach $egress_probe_host:$egress_probe_port; egress enforcement cannot be evaluated"
-fi
-
-negative_result="$(probe_egress workspace-0)" || fail "workspace egress probe failed to execute; denial is inconclusive"
-if [[ "$negative_result" == connected ]]; then
-  fail "default-deny egress is not enforced"
-fi
-positive_result="$(probe_egress egress-positive-control)" || fail "positive-control recheck could not execute"
-[[ "$positive_result" == connected ]] || fail "positive-control destination stopped responding; denial is inconclusive"
-
 # Bounded egress (ADR-013): the workspace may reach only its proxy, and the
 # proxy admits only listed hostnames on port 443. The disposable workspace's
 # destination list is patched with the probe hostname; nothing else changes.
@@ -259,44 +230,13 @@ kubectl --context "$context" --namespace "$namespace" rollout restart deployment
 kubectl --context "$context" --namespace "$namespace" rollout status \
   deployment/egress --timeout=120s >/dev/null 2>&1 || fail "egress proxy did not restart with the probe list"
 
-# Sends one CONNECT through the workspace's proxy and prints the status code.
-# $1 and $2 in the remote command belong to the remote shell.
-probe_proxy() {
-  local target=$1
-  local result
-
-  # shellcheck disable=SC2016
-  result="$(kubectl --context "$context" --namespace "$namespace" exec workspace-0 -- \
-    bash -ceu '
-      test -n "${EGRESS_SERVICE_HOST:-}" || exit 3
-      exec 3<>"/dev/tcp/$EGRESS_SERVICE_HOST/${EGRESS_SERVICE_PORT:-3128}"
-      printf "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n" "$1" "$1" >&3
-      IFS= read -r -t 10 line <&3 || exit 4
-      exec 3>&-
-      printf "%s" "$line" | tr -d "\r" | cut -d" " -f2
-    ' paw-proxy-probe "$target" 2>/dev/null)" || return 1
-  [[ "$result" =~ ^[0-9]{3}$ ]] || return 1
-  printf '%s' "$result"
-}
-
-allowed_status="$(probe_proxy "$egress_probe_name:443")" || fail "proxy probe for the listed hostname could not execute"
-[[ "$allowed_status" == 200 ]] || fail "proxy refused the listed hostname with status $allowed_status"
-unlisted_status="$(probe_proxy "example.com:443")" || fail "proxy probe for an unlisted hostname could not execute"
-[[ "$unlisted_status" == 403 ]] || fail "proxy did not refuse an unlisted hostname (status $unlisted_status)"
-port_status="$(probe_proxy "$egress_probe_name:80")" || fail "proxy probe for a non-443 port could not execute"
-[[ "$port_status" == 403 ]] || fail "proxy did not refuse port 80 (status $port_status)"
-
-# The workspace must not resolve names itself: no DNS egress exists.
-# shellcheck disable=SC2016
-dns_result="$(kubectl --context "$context" --namespace "$namespace" exec workspace-0 -- \
-  bash -ceu '
-    if timeout 5 bash -c "</dev/tcp/$1/443" 2>/dev/null; then
-      printf connected
-    else
-      printf failed
-    fi
-  ' paw-dns-probe "$egress_probe_name" 2>/dev/null)" || fail "workspace DNS probe could not execute"
-[[ "$dns_result" == failed ]] || fail "workspace resolved and reached $egress_probe_name directly; DNS egress is open"
+# Measure CONNECT, direct TCP, and name resolution independently, with
+# unselected positive controls before and after the refusals. This qualifies
+# transport behavior only; provider availability remains a separate gate.
+[[ "$egress_probe_port" == 443 ]] || fail "qualification requires a direct TCP 443 positive control"
+"$paw_binary" environment verify --context "$context" \
+  --egress-namespace "$namespace" --allowed-host "$egress_probe_name" \
+  --direct-address "$egress_probe_host" || fail "egress transport qualification did not pass"
 
 egress_log="$(kubectl --context "$context" --namespace "$namespace" logs deployment/egress 2>/dev/null)"
 printf '%s\n' "$egress_log" | grep -q '"outcome":"allowed"' || fail "proxy log lacks the allowed probe"

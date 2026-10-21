@@ -94,3 +94,25 @@ esac
 		})
 	}
 }
+
+func TestLiveEgressRequiresDirectIPBeforeClusterCommands(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"probe.example", "999.1.1.1", "1.1.1", "001.1.1.1", "1.02.3.4"} {
+		t.Run(host, func(t *testing.T) {
+			dir := t.TempDir()
+			paw := filepath.Join(dir, "paw")
+			if err := os.WriteFile(paw, []byte("#!"+bash+"\nexit 99\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bash, "check-minikube-live.sh", "fixture", paw)
+			cmd.Env = []string{"PATH=" + dir, "PAW_LIVE_TEST=1", "PAW_EGRESS_PROBE_HOST=" + host}
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), "PAW_EGRESS_PROBE_HOST must") {
+				t.Fatalf("output=%q error=%v", out, err)
+			}
+		})
+	}
+}

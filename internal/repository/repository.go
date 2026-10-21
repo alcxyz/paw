@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,6 +32,17 @@ type selection struct {
 	object string
 	ref    string
 	source string
+}
+
+type synchronizedWriter struct {
+	mu     *sync.Mutex
+	writer io.Writer
+}
+
+func (w *synchronizedWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.Write(data)
 }
 
 // ValidName reports whether name is an acceptable workspace repository name:
@@ -68,9 +80,12 @@ func Add(request Request, stdout, stderr io.Writer) error {
 	)
 	kubectl.WaitDelay = 5 * time.Second
 
-	bundle.Stderr = stderr
-	kubectl.Stdout = stdout
-	kubectl.Stderr = stderr
+	// Both commands copy output concurrently. The caller may also use one
+	// writer for stdout and stderr, so all copies share a lock.
+	var outputLock sync.Mutex
+	bundle.Stderr = &synchronizedWriter{mu: &outputLock, writer: stderr}
+	kubectl.Stdout = &synchronizedWriter{mu: &outputLock, writer: stdout}
+	kubectl.Stderr = bundle.Stderr
 
 	reader, writer, err := os.Pipe()
 	if err != nil {

@@ -141,6 +141,7 @@ func runEnvironment(args []string, stdout, stderr io.Writer, deps dependencies) 
 	}
 
 	var contextName string
+	var egress environment.EgressRequest
 	jsonOutput := false
 	for index := 1; index < len(args); index++ {
 		switch args[index] {
@@ -153,6 +154,17 @@ func runEnvironment(args []string, stdout, stderr io.Writer, deps dependencies) 
 				return usageError(stderr, "--context may only be specified once")
 			}
 			contextName = args[index]
+		case "--egress-namespace", "--allowed-host", "--direct-address":
+			option := args[index]
+			index++
+			if optionValueMissing(args, index) {
+				return usageError(stderr, option+" requires a value")
+			}
+			target := map[string]*string{"--egress-namespace": &egress.Namespace, "--allowed-host": &egress.AllowedHost, "--direct-address": &egress.DirectAddress}[option]
+			if *target != "" {
+				return usageError(stderr, option+" may only be specified once")
+			}
+			*target = args[index]
 		case "--json":
 			if jsonOutput {
 				return usageError(stderr, "--json may only be specified once")
@@ -171,7 +183,14 @@ func runEnvironment(args []string, stdout, stderr io.Writer, deps dependencies) 
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	report, verifyErr := deps.verifyEnv(ctx, environment.Request{Context: contextName})
+	request := environment.Request{Context: contextName}
+	if egress != (environment.EgressRequest{}) {
+		if egress.Namespace == "" || egress.AllowedHost == "" || egress.DirectAddress == "" {
+			return usageError(stderr, "egress verification requires --egress-namespace, --allowed-host, and --direct-address together")
+		}
+		request.Egress = &egress
+	}
+	report, verifyErr := deps.verifyEnv(ctx, request)
 	var outputErr error
 	if jsonOutput {
 		outputErr = environment.WriteJSON(stdout, report)
@@ -193,7 +212,7 @@ func runEnvironment(args []string, stdout, stderr io.Writer, deps dependencies) 
 }
 
 func environmentUsage() string {
-	return "usage: paw environment verify --context CONTEXT [--json]"
+	return "usage: paw environment verify --context CONTEXT [--egress-namespace NAMESPACE --allowed-host HOST --direct-address IP] [--json]"
 }
 
 type workspaceOptions struct {
@@ -346,6 +365,10 @@ func runWorkspace(args []string, stdout, stderr io.Writer, deps dependencies) in
 	}
 	if _, err := deployment.ImageName(selection); err != nil {
 		return usageError(stderr, err.Error())
+	}
+	if err := deployment.ValidateProviderActivation(selection.Provider); err != nil {
+		fmt.Fprintf(stderr, "paw: %v\n", err)
+		return 1
 	}
 	if options.adapter == deployment.AdapterKubernetes &&
 		slices.Contains([]string{"render", "create"}, operation) && options.imageRef == "" {

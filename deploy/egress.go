@@ -81,3 +81,15 @@ func EgressDestinationsText(destinations []EgressDestination) string {
 	}
 	return builder.String()
 }
+
+// ValidateProviderActivation keeps provider compositions unavailable until the
+// accepted application-destination requirement has an implemented design.
+// CONNECT transport qualification alone cannot satisfy that requirement.
+// TODO: enable new provider activations only after an accepted design
+// implements and qualifies application-destination enforcement.
+func ValidateProviderActivation(provider string) error {
+	if provider == "none" {
+		return nil
+	}
+	return fmt.Errorf("provider %q is unavailable: application-destination enforcement requires an accepted implementation design", provider)
+}

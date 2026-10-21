@@ -114,7 +114,7 @@ func TestImageNameMatrix(t *testing.T) {
 func TestMaterializeSelectionBindsImageAndMetadata(t *testing.T) {
 	path, cleanup, err := MaterializeSelection(
 		"minikube",
-		Selection{Profile: "platform-readonly", Provider: "opencode"},
+		Selection{Profile: "platform-readonly", Provider: "none"},
 	)
 	if err != nil {
 		t.Fatalf("MaterializeSelection returned an error: %v", err)
@@ -126,11 +126,11 @@ func TestMaterializeSelectionBindsImageAndMetadata(t *testing.T) {
 		t.Fatalf("read kustomization: %v", err)
 	}
 	for _, expected := range []string{
-		"newName: paw-platform-readonly-opencode",
+		"newName: paw-platform-readonly",
 		"path: /data/profile",
 		"value: platform-readonly",
 		"path: /data/provider",
-		"value: opencode",
+		"value: none",
 	} {
 		if !strings.Contains(string(content), expected) {
 			t.Fatalf("kustomization does not contain %q:\n%s", expected, content)
@@ -139,12 +139,12 @@ func TestMaterializeSelectionBindsImageAndMetadata(t *testing.T) {
 }
 
 func TestMaterializeGenericKubernetesBindsImmutableReleasedImage(t *testing.T) {
-	reference := "registry.example/paw/paw-platform-readonly-opencode@" + testDigest
+	reference := "registry.example/paw/paw-platform-readonly@" + testDigest
 	path, cleanup, err := MaterializeManifest(ManifestRequest{
 		Adapter: AdapterKubernetes,
 		Selection: Selection{
 			Profile:  "platform-readonly",
-			Provider: "opencode",
+			Provider: "none",
 		},
 		ImageReference:       reference,
 		EgressImageReference: "registry.example/paw/paw-egress-proxy@" + testEgressDigest,
@@ -159,12 +159,12 @@ func TestMaterializeGenericKubernetesBindsImmutableReleasedImage(t *testing.T) {
 		t.Fatalf("read kustomization: %v", err)
 	}
 	for _, expected := range []string{
-		"newName: registry.example/paw/paw-platform-readonly-opencode",
+		"newName: registry.example/paw/paw-platform-readonly",
 		"digest: " + testDigest,
 		"newName: registry.example/paw/paw-egress-proxy",
 		"digest: " + testEgressDigest,
 		"value: platform-readonly",
-		"value: opencode",
+		"value: none",
 	} {
 		if !strings.Contains(string(content), expected) {
 			t.Fatalf("generic kustomization does not contain %q:\n%s", expected, content)
@@ -286,7 +286,7 @@ func TestEgressDestinationsResolveByProvider(t *testing.T) {
 }
 
 func TestMaterializeSelectionRendersDestinations(t *testing.T) {
-	path, cleanup, err := MaterializeSelection(AdapterMinikube, Selection{Profile: "core", Provider: "codex"})
+	path, cleanup, err := MaterializeSelection(AdapterMinikube, Selection{Profile: "core", Provider: "none"})
 	if err != nil {
 		t.Fatalf("MaterializeSelection returned an error: %v", err)
 	}
@@ -298,11 +298,26 @@ func TestMaterializeSelectionRendersDestinations(t *testing.T) {
 	for _, expected := range []string{
 		"name: egress-destinations",
 		"path: /data/destinations",
-		`value: "auth.openai.com approved-provider-api\nchatgpt.com approved-provider-api\napi.openai.com approved-provider-api\n"`,
+		`value: ""`,
 		"newName: paw-egress-proxy",
 	} {
 		if !strings.Contains(string(content), expected) {
 			t.Fatalf("kustomization does not contain %q:\n%s", expected, content)
+		}
+	}
+}
+
+func TestProviderCompositionsCannotMaterialize(t *testing.T) {
+	for selection := range imageNames {
+		if selection.Provider == "none" {
+			continue
+		}
+		for _, adapter := range []string{AdapterMinikube, AdapterKubernetes} {
+			path, cleanup, err := MaterializeManifest(ManifestRequest{Adapter: adapter, Selection: selection})
+			cleanup()
+			if err == nil || path != "" || !strings.Contains(err.Error(), "application-destination enforcement") {
+				t.Fatalf("%s %+v unexpectedly materialized: path=%q error=%v", adapter, selection, path, err)
+			}
 		}
 	}
 }

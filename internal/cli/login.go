@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"io"
+
+	deployment "github.com/alcxyz/paw/deploy"
 )
 
 // providerSessionCommands are the reviewed in-pod login and logout commands
@@ -26,6 +28,12 @@ func runWorkspaceSession(operation string, options workspaceOptions, stdout, std
 	commands, reviewed := providerSessionCommands[options.provider]
 	if !reviewed {
 		return usageError(stderr, fmt.Sprintf("provider %q has no reviewed login flow", options.provider))
+	}
+	if operation == "login" {
+		if err := deployment.ValidateProviderActivation(options.provider); err != nil {
+			fmt.Fprintf(stderr, "paw: %v\n", err)
+			return 1
+		}
 	}
 	var statefulSet statefulSetResource
 	if err := getUpgradeResource(options.context, workspaceNamespace, []string{"statefulset/workspace"}, &statefulSet, deps); err != nil {

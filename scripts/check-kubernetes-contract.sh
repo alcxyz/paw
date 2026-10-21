@@ -404,6 +404,22 @@ if [[ -n "$paw_binary" ]]; then
   claude_code_destinations=$'claude.ai approved-provider-api\nplatform.claude.com approved-provider-api\napi.anthropic.com approved-provider-api\n'
   while read -r profile provider image; do
     name=${profile}-${provider}
+    if [[ "$provider" != none ]]; then
+      for adapter in minikube kubernetes; do
+        extra_args=()
+        if [[ "$adapter" == kubernetes ]]; then
+          extra_args=(--image-ref "registry.example/paw/$image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            --egress-image-ref "registry.example/paw/paw-egress-proxy@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        fi
+        if "$paw_binary" workspace render --adapter "$adapter" --profile "$profile" --provider "$provider" "${extra_args[@]}" >"$check_dir/$name.yaml" 2>"$check_dir/$name.err"; then
+          echo "provider composition unexpectedly available: $name" >&2
+          exit 1
+        fi
+        test ! -s "$check_dir/$name.yaml"
+        grep -q 'application-destination enforcement' "$check_dir/$name.err"
+      done
+      continue
+    fi
     destinations=""
     if [[ "$provider" == codex ]]; then
       destinations="$codex_destinations"

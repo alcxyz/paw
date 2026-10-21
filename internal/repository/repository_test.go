@@ -143,6 +143,53 @@ func TestAddCompletesLargeBundleThroughOSPipe(t *testing.T) {
 	}
 }
 
+func TestAddPreservesConcurrentCommandOutput(t *testing.T) {
+	source := newTestRepository(t)
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	writeTestFile(t, filepath.Join(bin, "git"), `#!/bin/sh
+if [ "${3-}" = bundle ]; then
+  i=0
+  while [ "$i" -lt 1000 ]; do
+    printf 'bundle diagnostic\n' >&2
+    i=$((i + 1))
+  done
+fi
+exec "$PAW_TEST_REAL_GIT" "$@"
+`)
+	writeTestFile(t, filepath.Join(bin, "kubectl"), `#!/bin/sh
+i=0
+while [ "$i" -lt 1000 ]; do
+  printf 'workspace diagnostic\n' >&2
+  i=$((i + 1))
+done
+cat >/dev/null
+printf 'workspace output\n'
+`)
+	for _, name := range []string{"git", "kubectl"} {
+		if err := os.Chmod(filepath.Join(bin, name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PAW_TEST_REAL_GIT", git)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var output bytes.Buffer
+	if err := Add(Request{Context: "paw-local", Name: "selected", Revision: "refs/heads/main", Source: source}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"bundle diagnostic\n", "workspace diagnostic\n"} {
+		if got := strings.Count(output.String(), line); got != 1000 {
+			t.Fatalf("lost command output: %q count = %d, want 1000", line, got)
+		}
+	}
+	if !strings.Contains(output.String(), "workspace output\n") || !strings.Contains(output.String(), "repository selected materialized at ") {
+		t.Fatal("missing command or completion output")
+	}
+}
+
 func TestFinishAddPrefersWorkspaceFailureOverBundlePipeFailure(t *testing.T) {
 	kubectlErr := errors.New("destination already exists")
 	bundleErr := errors.New("broken pipe")

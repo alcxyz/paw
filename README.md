@@ -78,9 +78,9 @@ paw environment verify --context minikube --json
 paw profile list
 paw profile show platform-readonly
 paw profile show platform-readonly --json
-paw workspace render --adapter minikube --profile core --provider codex
+paw workspace render --adapter minikube --profile core --provider none
 paw workspace create --adapter minikube --context minikube \
-  --profile platform-readonly --provider opencode
+  --profile platform-readonly --provider none
 paw workspace inspect --adapter minikube --context minikube
 paw workspace upgrade-check --adapter minikube --context minikube
 paw workspace connect --adapter minikube --context minikube
@@ -103,17 +103,24 @@ provider:
 
 ```sh
 paw workspace create --adapter kubernetes --context paw-k3s \
-  --profile core --provider codex \
-  --image-ref "$PAW_IMAGE_REF"
+  --profile core --provider none \
+  --image-ref "$PAW_IMAGE_REF" --egress-image-ref "$PAW_EGRESS_IMAGE_REF"
 paw workspace inspect --adapter kubernetes --context paw-k3s
 paw workspace connect --adapter kubernetes --context paw-k3s
 paw workspace destroy --adapter kubernetes --context paw-k3s --delete-state
 ```
 
 `PAW_IMAGE_REF` must be a fully qualified reference such as
-`registry.example/team/paw-codex@sha256:…`; tags and profile/provider image-name
+`registry.example/team/paw-core@sha256:…`; tags and profile/provider image-name
 mismatches are rejected. The `minikube` compatibility adapter selects the
 reviewed local `:dev` image and does not accept `--image-ref`.
+
+Provider selections other than `none` are currently unavailable for manifest
+rendering, creation, and new login. Provider-free workspaces remain available.
+Connection, pairing, logout, revocation, inspection, and destruction remain
+available for existing workspaces. Application-destination enforcement needs a
+separately accepted implementation design. CONNECT authority validation
+and transport qualification alone do not establish application routing.
 
 Before creating a workspace, `paw environment verify --context CONTEXT` creates
 one uniquely named restricted namespace and uses only in-cluster endpoints to
@@ -388,6 +395,36 @@ unselected connection remain healthy while policy is active. It distinguishes
 the probe's network results from Kubernetes transport errors, and cleanup uses
 namespace identity preconditions. Earlier `network-policy-v1` reports do not
 qualify the revised probe.
+
+ADR-013 decision 4 adds an optional transport qualification against an already
+prepared disposable workspace. The caller owns its destination list and cleanup.
+Baseline verification runs first, including readiness of its pinned `agnhost`
+image. If baseline verification cannot complete, proxy qualification remains
+`unproven` and no proxy measurements run. A completed non-enforcing baseline
+still runs the requested transport probes and keeps the overall result `fail`:
+
+```sh
+paw environment verify --context CONTEXT \
+  --egress-namespace DISPOSABLE_NAMESPACE \
+  --allowed-host probe.example --direct-address 192.0.2.1 --json
+```
+
+Replace the example hostname and IP with reachable test endpoints. The namespace
+must contain `workspace-0` and an unselected `egress-positive-control` pod with
+Bash, timeout, and getent, as prepared by `scripts/check-minikube-live.sh`.
+The qualifier requires allowed-host CONNECT success, unlisted-host and wrong-port
+refusals, direct TCP bypass denial, and independent DNS denial. Direct TCP and
+DNS positive controls run before and after the denials. Missing tools or failed
+controls are inconclusive. A non-enforcing environment fails with the named
+`proxy-direct-bypass` or `proxy-workspace-dns` check.
+
+Reports distinguish `egressQualification` from `providerAvailability`. Without
+the optional probes, egress qualification remains `unproven`; a failed baseline
+keeps requested egress qualification `fail`. Even a transport `pass`
+keeps availability for new provider activations `unavailable`. Live
+qualification of this probe version remains unproven. No provider activation,
+promotion, or release follows
+from synthetic tests or a baseline network-policy pass.
 
 Inspect the evaluated, machine-readable profile contract:
 

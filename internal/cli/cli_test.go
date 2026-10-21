@@ -294,7 +294,7 @@ func TestWorkspaceRender(t *testing.T) {
 			"workspace", "render",
 			"--adapter", "minikube",
 			"--profile", "core",
-			"--provider", "codex",
+			"--provider", "none",
 		},
 		&stdout,
 		&bytes.Buffer{},
@@ -323,7 +323,7 @@ func TestWorkspaceRenderUsesGenericKubernetesAdapterAndImmutableImage(t *testing
 		request = actual
 		return "/manifests/kubernetes", func() {}, nil
 	}
-	image := testReleasedImage("paw-platform-readonly-codex")
+	image := testReleasedImage("paw-platform-readonly")
 	egressImage := testReleasedImage("paw-egress-proxy")
 
 	exitCode := runWithDependencies(
@@ -331,7 +331,7 @@ func TestWorkspaceRenderUsesGenericKubernetesAdapterAndImmutableImage(t *testing
 			"workspace", "render",
 			"--adapter", "kubernetes",
 			"--profile", "platform-readonly",
-			"--provider", "codex",
+			"--provider", "none",
 			"--image-ref", image,
 			"--egress-image-ref", egressImage,
 		},
@@ -344,7 +344,7 @@ func TestWorkspaceRenderUsesGenericKubernetesAdapterAndImmutableImage(t *testing
 		Adapter: deployment.AdapterKubernetes,
 		Selection: deployment.Selection{
 			Profile:  "platform-readonly",
-			Provider: "codex",
+			Provider: "none",
 		},
 		ImageReference:       image,
 		EgressImageReference: egressImage,
@@ -456,7 +456,7 @@ func TestWorkspaceCreateUsesSelectedContext(t *testing.T) {
 			"--adapter", "minikube",
 			"--context", "minikube",
 			"--profile", "platform-readonly",
-			"--provider", "opencode",
+			"--provider", "none",
 		},
 		&bytes.Buffer{},
 		&bytes.Buffer{},
@@ -471,7 +471,7 @@ func TestWorkspaceCreateUsesSelectedContext(t *testing.T) {
 	if exitCode != 0 || !slices.EqualFunc(commands, expected, slices.Equal[[]string]) {
 		t.Fatalf("unexpected create result: exit=%d args=%v", exitCode, commands)
 	}
-	if selection != (deployment.Selection{Profile: "platform-readonly", Provider: "opencode"}) {
+	if selection != (deployment.Selection{Profile: "platform-readonly", Provider: "none"}) {
 		t.Fatalf("unexpected selection: %#v", selection)
 	}
 }
@@ -1004,4 +1004,27 @@ func workspaceTestDependencies(runner commandRunner) dependencies {
 
 func alwaysAvailable(name string) (string, error) {
 	return "/bin/" + name, nil
+}
+
+func TestEnvironmentEgressProbeSelection(t *testing.T) {
+	deps := workspaceTestDependencies(nil)
+	called := false
+	deps.verifyEnv = func(_ context.Context, request environment.Request) (environment.Report, error) {
+		called = true
+		if request.Context != "fixture" || request.Egress == nil || *request.Egress != (environment.EgressRequest{Namespace: "disposable", AllowedHost: "probe.example", DirectAddress: "192.0.2.1"}) {
+			t.Fatalf("request: %+v", request)
+		}
+		return environment.Report{Outcome: environment.OutcomePass}, nil
+	}
+	args := []string{"environment", "verify", "--context", "fixture", "--egress-namespace", "disposable", "--allowed-host", "probe.example", "--direct-address", "192.0.2.1", "--json"}
+	if exit := runWithDependencies(args, io.Discard, io.Discard, deps); exit != 0 || !called {
+		t.Fatalf("exit=%d called=%v", exit, called)
+	}
+	called = false
+	if exit := runWithDependencies(args[:len(args)-3], io.Discard, io.Discard, deps); exit != 2 || called {
+		t.Fatalf("partial selection: exit=%d called=%v", exit, called)
+	}
+	if exit := runWithDependencies(append(args, "--allowed-host", "other.example"), io.Discard, io.Discard, deps); exit != 2 || called {
+		t.Fatalf("duplicate option: exit=%d called=%v", exit, called)
+	}
 }
