@@ -2,6 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-08-20
+- Updated: 2026-09-22 (section 7, per ADR-009)
+- Updated: 2026-09-23 (all-providers composition in section 6, per ADR-016)
+- History: [replaced text](archive/ADR-002-go-cli-and-nix-flake-build-architecture-history.md)
 
 ## Context
 
@@ -275,49 +278,56 @@ combine providers when collaboration requires it, but provider binaries are not
 part of the minimal core by default. Authentication and state are separate
 workspace attachments governed by the selected persistence and identity policy.
 
+The provider value `all`, alongside `none`, `codex`, `claude-code`, and
+`opencode`, composes every reviewed provider layer into one image per profile:
+`paw-all`, `paw-developer-all`, and `paw-platform-readonly-all`
+([ADR-016](ADR-016-all-providers-composition.md)). Single-provider images
+remain available and remain the lean choice; choosing one or all is the
+operator's decision at create time. Arbitrary provider subsets are not built.
+
 No personal or organizational provider credential is stored in a Nix derivation,
 OCI layer, release artifact, profile definition, or build log.
 
-### 7. Reuse pinned shared T3 and Codex package recipes
+### 7. Own the T3 and Codex build recipes, with explicit overrides
 
-This section records the initial alignment implementation. Its mandatory shared
-repository dependency is superseded by
-[ADR-009](ADR-009-portable-build-inputs-and-scheduled-updates.md): PAW owns its
-build recipes and defaults to upstream, with explicit downstream overrides.
+PAW owns the headless T3 and provider image build recipes
+([ADR-009](ADR-009-portable-build-inputs-and-scheduled-updates.md)). Its
+pinned default inputs are the version authorities; PAW does not rely on
+whichever executable happens to be installed on the build host, and its
+default build does not depend on a personal package repository.
 
-PAW pins the reusable `nix-packages` repository as a source input. Its Codex
-recipe and patched T3 fork source are the version authorities for these two
-components; PAW does not independently maintain an upstream T3 version or rely
-on whichever executable happens to be installed on the build host.
+- T3: the default source is a pinned upstream stable release, not a personal
+  fork or a moving branch. `nix/packages/t3code/source.json` pins the
+  upstream repository, immutable revision, version, source hash, and
+  dependency hashes.
+- Codex: `nix/packages/codex-cli/source.json` and its adjacent npm lock file
+  pin the upstream CLI distribution and dependencies.
+- Other providers and platform tools remain pinned by PAW's nixpkgs revision
+  in `flake.lock` until explicitly migrated.
 
-Evaluate those recipes with PAW's pinned nixpkgs to avoid duplicated runtime
+Evaluate the recipes with PAW's pinned nixpkgs to avoid duplicated runtime
 libraries and retain PAW's Linux architecture targets. The headless derivation
-reuses the fork source, version, patches, and resource monitor, but builds only
-the server and browser assets. A focused Codex runtime preserves the shared
-package's provider payload and launcher without adding a full build-time Node
-runtime. Image and closure contracts remain the acceptance gate.
+builds only the server, browser assets, and resource monitor. A focused Codex
+runtime preserves the provider payload and launcher without adding a full
+build-time Node runtime. Image and closure contracts remain the acceptance gate.
 
-This is source/version alignment, not reuse of a desktop image or an automatic
-rolling update. Updating the shared-source lock requires rebuilding, measuring,
-and testing PAW. Other providers remain independently pinned by PAW's nixpkgs
-until explicitly migrated. Credentials and host configuration are never reused.
+Operators can supply a fork source, revision, patches, and dependency hashes,
+and override provider packages, at build time through the documented Nix
+interface ([builds](../builds.md)). This produces a custom image; ordinary
+users can continue using released images without installing Nix. A custom
+source must satisfy the same CLI compatibility, immutable runtime, provider
+separation, and image-size checks, and source overrides do not promise
+compatibility with arbitrary forks.
 
-Alternatives were maintaining duplicate version pins, which permits drift, or
-copying the complete desktop runtime, which violates the headless boundary.
+This is not reuse of a desktop image or an automatic rolling update. Updating a
+pin requires rebuilding, measuring, and testing PAW; scheduled update proposals
+and their safety contract are defined by ADR-009. Credentials and host
+configuration are never reused.
 
-The shared-source migration was measured on `linux/amd64` with T3
-`0.0.42-fork.20+pa415f7130b` and Codex `0.155.1`:
-
-| Metric | `paw-core` | `paw-codex` |
-| --- | ---: | ---: |
-| Runtime-closure NAR | 574,020,480 bytes | 944,534,376 bytes |
-| Uncompressed layers | 646,666,240 bytes | 1,017,405,440 bytes |
-| Registry transfer | 178,547,209 bytes | 327,026,165 bytes |
-| Layers | 80 | 80 |
-
-Both pass the existing budgets without increases. The headless T3 closure also
-passes its existing 450 MiB limit. These are build-contract results, not live
-provider-authentication or egress qualification.
+Alternatives were a mandatory shared personal package repository, rejected as
+the product default by ADR-009 (it remains a possible source of downstream
+custom configuration), or copying the complete desktop runtime, which violates
+the headless boundary.
 
 ## Consequences
 

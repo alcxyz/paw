@@ -2,9 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-09-22
+- Updated: 2026-09-22 (hosting, per ADR-010)
+- History: [replaced text](archive/ADR-009-portable-build-inputs-and-scheduled-updates-history.md)
 - Amends: ADR-002 section 7
-- Hosting amended by ADR-010: GitHub is now canonical; the safety contract below
-  is unchanged.
 
 ## Context
 

@@ -2,14 +2,15 @@
 
 - Status: Accepted
 - Date: 2026-08-21
-- Repository storage amended by ADR-011; selection and import rules are unchanged.
+- Updated: 2026-09-22 (repository storage, per ADR-011)
+- History: [replaced text](archive/ADR-004-streamed-git-bundle-repository-materialization-history.md)
 
 ## Context
 
 ADR-001 requires selected repository clones or worktrees and explicitly rejects
 ambient organization checkouts. ADR-003 assigns repository selection to an
 environment adapter with read-only source authority. The initial Kubernetes
-base therefore starts with an empty `/workspace/work` volume.
+base therefore started with an empty `/workspace/work` volume.
 
 The Minikube proof of concept needs a useful repository path without mounting a
 host checkout, placing Git credentials in the pod, enabling unrestricted Git
@@ -47,6 +48,12 @@ For the initial local adapter:
   `/workspace/work/NAME`; and
 - materialization uses a no-clobber final rename and refuses to replace an
   existing destination, including one created concurrently.
+
+`/workspace/work` is the `workspace-work` claim, a 10 GiB `ReadWriteOnce`
+claim separate from T3 state. Materialized repositories survive ordinary pod
+replacement and remain until explicit workspace deletion
+([ADR-011](ADR-011-state-preserving-workspace-upgrades.md)). Retention is not
+backup.
 
 The bundle includes committed objects reachable from the selected ref. It does
 not include the host worktree's uncommitted files, Git configuration, credential

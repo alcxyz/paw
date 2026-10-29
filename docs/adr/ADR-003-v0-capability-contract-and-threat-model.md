@@ -2,6 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-08-21
+- Updated: 2026-09-22 (developer profile, per ADR-015)
+- History: [replaced text](archive/ADR-003-v0-capability-contract-and-threat-model-history.md)
 
 ## Context
 
@@ -26,8 +28,8 @@ The canonical v0 contract is [contract/v0.json](../../contract/v0.json). It
 defines:
 
 - ordered authority classes;
-- the security-relevant properties of the `core` and `platform-readonly`
-  profiles;
+- the security-relevant properties of the `core`, `developer`, and
+  `platform-readonly` profiles;
 - trust boundaries;
 - required environment adapters;
 - invariants with expected enforcement boundaries; and
@@ -61,6 +63,16 @@ they do not authorize mutations to repositories or platform resources.
 The `core` profile is capped at `workspace-only`. It may use an approved
 provider session, read explicitly selected repositories, and modify workspace
 files, but it receives no platform identity and cannot push to a remote.
+
+The `developer` profile is `core` with a compiler, not a new authority class
+([ADR-015](ADR-015-developer-profile.md)). It has the same `workspace-only`
+ceiling, capabilities, egress purposes, and prohibitions as `core`, plus the
+Go toolchain, shellcheck, jq, and yq in its runtime packages. Its images set
+`CGO_ENABLED=0` and `GOTOOLCHAIN=local`, so the workspace never tries to
+download a toolchain, and the image contracts assert exactly those variables.
+Nix is not in the profile: flake checks, image builds, and live cluster tests
+run outside the workspace, which has no cluster identity and does not gain one
+for self-development.
 
 The `platform-readonly` profile is capped at `read-only`. It adds planning and
 inspection of explicitly selected non-production platform targets. Read-only

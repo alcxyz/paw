@@ -2,7 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-09-07
-- Upgrade/storage scope extended by ADR-011; create and destroy remain explicit.
+- Updated: 2026-09-22 (upgrade and storage scope, per ADR-011)
+- History: [replaced text](archive/ADR-007-workspace-lifecycle-ownership-and-readiness-history.md)
 
 ## Context
 
@@ -34,6 +35,12 @@ operations as well as in the opt-in conformance script.
   Kubernetes object deletion from backing-volume reclamation and erasure.
 - Existing namespaces without the ownership marker require operator-reviewed
   cleanup; PAW does not automatically adopt them.
+- Create and destroy remain explicit and are never reinterpreted as an upgrade.
+  Workspace data claims survive ordinary pod replacement and remain until
+  explicit workspace deletion. Upgrading an existing workspace follows the
+  controlled-downtime, single-writer contract of
+  [ADR-011](ADR-011-state-preserving-workspace-upgrades.md), and legacy
+  `emptyDir` workspaces are refused before their pod is stopped or replaced.
 
 The baseline network check does not establish provider, identity, storage, or
 external egress conformance. Those accepted requirements remain separate work.
