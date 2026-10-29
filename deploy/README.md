@@ -78,11 +78,8 @@ the provider allows: it survives pod replacement, upgrades, and restores, and
 it ends only with logout or workspace destruction. The claim is never mounted by
 the backup helper, so it is never in a backup, never restored, and never in a
 manifest or on the operator host
-([ADR-017](../docs/adr/ADR-017-retained-provider-session-claim.md), amending
-[ADR-014](../docs/adr/ADR-014-pod-scoped-provider-login-state.md)). It lives only
-for that pod's lifetime and never reaches a persistent claim, a backup, a
-manifest, or the operator host
-([ADR-014](../docs/adr/ADR-014-pod-scoped-provider-login-state.md)).
+([ADR-014](../docs/adr/ADR-014-pod-scoped-provider-login-state.md),
+[ADR-017](../docs/adr/ADR-017-retained-provider-session-claim.md)).
 
 ```sh
 paw workspace login --adapter minikube --context minikube --provider codex

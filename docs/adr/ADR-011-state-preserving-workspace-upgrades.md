@@ -2,7 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-09-22
+- Updated: 2026-09-23 (storage layout, per ADR-017)
 - Amends: ADR-004 repository storage and ADR-007 lifecycle scope
+- History: [replaced text](archive/ADR-011-state-preserving-workspace-upgrades-history.md)
 
 ## Context
 
@@ -16,19 +18,23 @@ acceptable foundation for routine upgrades.
 
 ### Persist data independently of the runtime
 
-New workspaces use two separate 10 GiB `ReadWriteOnce` claims:
+New workspaces use two separate 10 GiB `ReadWriteOnce` data claims:
 `workspace-state` for T3 state and `workspace-work` for selected repositories.
 Both survive ordinary pod replacement and remain until explicit workspace
-deletion. Temporary files remain on `emptyDir`. Mark this layout
-`paw.alc.xyz/storage-layout: persistent-v1` on the workload and its pod template.
+deletion. A third claim, `workspace-session` (1 GiB), holds provider login
+state and is outside the backup and restore contract
+([ADR-014](ADR-014-pod-scoped-provider-login-state.md),
+[ADR-017](ADR-017-retained-provider-session-claim.md)). Temporary files remain
+on `emptyDir`. Mark this layout
+`paw.alc.xyz/storage-layout: persistent-v2` on the workload and its pod template.
 Retention is not backup, high availability, secure erasure, or a promise that
 the storage system survives cluster or node loss. `ReadWriteOnce` alone does not
 enforce a single process writer; lifecycle orchestration must do that too.
 
-Provider authentication remains a separate runtime attachment/retention design.
-These claims do not authorize copying host credentials or storing provider
-authentication in the existing persistent home. T3 state and future backup
-artifacts may contain sensitive session data and must not be printed or committed.
+Provider login state is kept on the session claim. The data claims do not
+authorize copying host credentials or storing provider authentication in the
+persistent home. T3 state and backup artifacts may contain sensitive session
+data and must not be printed or committed.
 
 ### Controlled downtime, not concurrent writers
 
@@ -51,10 +57,13 @@ backup and be tested on disposable storage before a mutating upgrade is exposed.
 
 ### Stage the implementation
 
-First deliver persistent repository storage and a read-only upgrade preflight.
-This does not expose a mutating upgrade command or claim backup/recovery is
-implemented. Follow with backup/restore, exclusive lifecycle transitions, and
-failure-injection qualification under [issue #14](https://github.com/alcxyz/paw/issues/14).
+Persistent repository storage, a read-only upgrade preflight
+(`paw workspace upgrade-check`), and stopped-writer backup and empty-target
+restore ([ADR-012](ADR-012-offline-backup-and-empty-target-restore.md)) are
+implemented. No mutating
+upgrade command is exposed yet: the controlled single-writer restart as one
+upgrade flow, and failure-injection qualification, remain under
+[issue #14](https://github.com/alcxyz/paw/issues/14).
 
 Legacy `emptyDir` workspaces must be refused before stopping or replacing their
 pod. Migration is a separate explicit operation requiring verified preservation
@@ -77,7 +86,8 @@ destroy as an upgrade, and never silently adopt an unmarked namespace.
 
 ## Validation
 
-- Structural checks prove the two PVC mounts and ephemeral temporary storage.
+- Structural checks prove the data and session claim mounts and ephemeral
+  temporary storage.
 - Preflight tests refuse legacy, unowned, missing, inconsistent, or unhealthy
   storage/workload state without writes.
 - Live qualification must prove repository and T3 state survival across a

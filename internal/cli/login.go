@@ -9,7 +9,7 @@ import (
 
 // providerSessionCommands are the reviewed in-pod login and logout commands
 // for each provider (ADR-014). The provider tool writes its credential to the
-// pod-scoped session volume; PAW never handles the credential itself.
+// retained session claim; PAW never handles the credential itself.
 var providerSessionCommands = map[string]struct {
 	login  []string
 	logout []string
@@ -64,7 +64,7 @@ func runWorkspaceSession(operation string, options workspaceOptions, stdout, std
 		return 1
 	}
 	if operation == "login" {
-		fmt.Fprintln(stdout, "workspace login completed; the credential lives on the pod's session volume and is discarded when the pod is replaced")
+		fmt.Fprintln(stdout, "workspace login completed; the credential lives on the retained session claim until logout or workspace destruction")
 	} else {
 		fmt.Fprintln(stdout, "workspace logout completed")
 	}

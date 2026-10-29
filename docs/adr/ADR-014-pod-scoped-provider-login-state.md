@@ -1,7 +1,9 @@
-# ADR-014: Pod-scoped provider login state
+# ADR-014: Provider login state inside the workspace
 
-- Status: Accepted; amended by ADR-017 (login state moved to a retained claim)
+- Status: Accepted
 - Date: 2026-09-22
+- Updated: 2026-09-23 (retained login state, per ADR-017)
+- History: [replaced text](archive/ADR-014-pod-scoped-provider-login-state-history.md)
 - Implements: ADR-003 runtime credential attachment; unblocks ADR-008 pilot gate
 
 ## Context
@@ -30,18 +32,24 @@ stored credential.
 
 ## Decision
 
-### 1. Keep provider login state on an in-memory, pod-scoped volume
+### 1. Keep provider login state on a retained session claim outside backups
 
-The workspace pod mounts one `emptyDir` with `medium: Memory` as two
-`subPath` directories, `/workspace/session/codex` and
-`/workspace/session/claude`, so the kubelet creates them inside the volume
-before the tools start; Codex refuses to run when its home is missing, and a
-directory baked into the image would be hidden under the mount. Provider
-images point their state directories there: `CODEX_HOME=/workspace/session/codex`
-and `CLAUDE_CONFIG_DIR=/workspace/session/claude`. Nothing on that volume
-survives pod replacement, appears in a backup, or is written to node disk.
-The image contracts assert exactly these variables for the matching provider
-image and none for others.
+The workspace pod mounts the `workspace-session` claim (1 GiB,
+`ReadWriteOnce`, `retain-until-destroy`) as two `subPath` directories,
+`/workspace/session/codex` and `/workspace/session/claude`, so the kubelet
+creates them inside the volume before the tools start; Codex refuses to run
+when its home is missing, and a directory baked into the image would be hidden
+under the mount. Provider images point their state directories there:
+`CODEX_HOME=/workspace/session/codex` and
+`CLAUDE_CONFIG_DIR=/workspace/session/claude`. The image contracts assert
+exactly these variables for the matching provider image and none for others
+([ADR-017](ADR-017-retained-provider-session-claim.md)).
+
+The session claim is outside the backup and restore contract: the backup
+helper mounts only the state and work claims, so an archive never contains a
+credential; restore never writes the session claim; and upgrade preflight
+validates the session mount but does not treat the claim as data to preserve
+or verify.
 
 ### 2. Log in inside the pod, driven by the operator
 
@@ -54,20 +62,21 @@ sees, stores, forwards, or logs the credential, and no host credential
 directory is copied.
 
 `paw workspace logout --provider PROVIDER` runs the provider's logout command
-the same way. Replacing the pod also discards every login.
+the same way.
 
 The requested provider must match the workspace's recorded provider; PAW
 refuses to run one provider's login in another provider's image.
 
-### 3. Accept per-pod re-login and ephemeral provider-side state
+### 3. A login lasts for the workspace's lifetime
 
-Because the provider state directories are pod-scoped, a workspace needs a
-new login after every pod replacement, including after a backup, restore, or
-upgrade. Provider-side artifacts that share those directories, such as Codex
-rollouts or Claude Code local history, are ephemeral too. T3 thread state
-remains on the persistent state claim. Whether T3 can continue a provider
-thread after the provider's own transcript is gone is a pilot finding to
-record, not a reason to move credentials back to persistent storage.
+A login survives pod replacement, upgrade, backup, and restore for as long as
+the provider's token lives, and ends only with `paw workspace logout`,
+provider-side revocation, or workspace destruction, which deletes the claim
+with the namespace. A restored workspace keeps whatever login its session
+claim already holds, or none. Provider-side artifacts that share those
+directories, such as Codex rollouts or Claude Code local history, persist with
+the login, so T3 provider threads resume after replacement. T3 thread state
+remains on the persistent state claim.
 
 ### 4. Do not adopt long-lived tokens or credential helpers yet
 
@@ -81,31 +90,32 @@ boundary, which ADR-003 lists as follow-up work.
 
 ### Positive
 
-- No credential ever reaches a manifest, image, persistent claim, backup, or
-  the operator host; the pilot gate on credential storage is satisfied.
-- Revocation is simple and complete: log out or replace the pod.
+- No credential ever reaches a manifest, image, backup, or the operator host.
+- One login per workspace lifetime, not per pod.
+- Revocation is explicit: log out, revoke at the provider, or destroy the
+  workspace.
 - The mechanism is provider-neutral: any tool with an in-terminal login and
   a relocatable state directory fits.
 
 ### Negative
 
-- Operators log in again after every pod replacement.
-- Provider-side transcripts and local settings do not persist; resume
-  behavior of T3 provider threads across replacement needs pilot evidence.
-- Memory-backed storage counts against the pod's memory limit; the volume is
-  capped at 64 MiB.
+- A credential is at rest on cluster storage for the workspace's lifetime.
+  Encryption at rest is the storage environment's responsibility, and
+  destroy is the only PAW-side erasure beyond logout.
+- Legacy `persistent-v1` workspaces fail preflight and need recreation.
 
 ## Alternatives considered
 
 ### Persist provider state on the state claim and scrub backups
 
-Rejected. It leaves a live credential at rest on retained storage, contrary
-to ADR-003, and makes backup safety depend on a scrub list.
+Rejected. It would put the credential in every backup and restore, and makes
+backup safety depend on a scrub list.
 
-### A separate persistent claim for provider state
+### Keep provider state on a memory-backed volume
 
-Rejected for the same reason: retained storage with a credential at rest,
-plus a third claim to reason about in backup and restore.
+Rejected after use: updates replace the pod routinely, and a new login after
+each one, with ephemeral transcripts that broke T3 provider thread resume, is
+the wrong cost ([ADR-017](ADR-017-retained-provider-session-claim.md)).
 
 ### Inject a token from the operator host
 

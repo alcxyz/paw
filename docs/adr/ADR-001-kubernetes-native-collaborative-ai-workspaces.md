@@ -1,7 +1,9 @@
 # ADR-001: Kubernetes-native collaborative AI workspaces
 
-- Status: Accepted; deployment-contract decision amended by ADR-006
+- Status: Accepted
 - Date: 2026-08-20
+- Updated: 2026-08-22 (section 2, per ADR-006)
+- History: [replaced text](archive/ADR-001-kubernetes-native-collaborative-ai-workspaces-history.md)
 
 ## Context
 
@@ -52,11 +54,12 @@ Multiple authenticated browser clients may connect to the same workspace. T3
 server replicas must remain one, and separate T3 servers must not share writable
 state.
 
-### 2. Kubernetes is the initial deployment contract
+### 2. Kubernetes is the implemented deployment contract
 
-> ADR-006 amends this decision: Kubernetes remains the only implemented backend
-> for M1, while the workspace contract may support additional runtime backends
-> in later milestones.
+The workspace contract is authoritative, and Kubernetes is the only
+implemented runtime backend for M1. Later milestones may add runtime backends
+that implement the same workspace contract
+([ADR-006](ADR-006-staged-runtime-backend-extensibility.md)).
 
 Use one OCI image and one set of Kubernetes resources for both local and remote
 execution.
